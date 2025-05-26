@@ -3,11 +3,11 @@ import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import WebViewScreen from '../../components/WebViewScreen';
 import { useAuth } from '../../context/AuthContext';
 
-export default function ListingsScreen() {
-  const { isInitializing, isAuthenticated } = useAuth();
+export default function ProfileScreen() {
+  const { isInitializing, isAuthenticated, tokens } = useAuth();
   const [isReady, setIsReady] = useState(false);
   
-  // Wait for auth to initialize
+  // Wait for auth to initialize before rendering
   useEffect(() => {
     if (!isInitializing) {
       setIsReady(true);
@@ -17,28 +17,31 @@ export default function ListingsScreen() {
   // Show loading spinner while initializing
   if (isInitializing || !isReady) {
     return (
-      <View style={styles.loadingContainer}>
+      <View style={styles.loaderContainer}>
         <ActivityIndicator size="large" color="#6200EA" />
       </View>
     );
   }
-
-  // We always show listings, but the URL depends on auth state
-  // This allows the web app to handle protected actions like liking items
+  
+  // Render WebView with auth state - let the WebView component handle auth
   return (
     <WebViewScreen 
-      uri="https://listtra.com/listings"
+      uri="https://listtra.com/profile" 
       showLoader={true}
-      // Listings page doesn't require auth, but we still pass the state
+      requiresAuth={true}
     />
   );
 }
 
 const styles = StyleSheet.create({
-  loadingContainer: {
+  container: {
+    flex: 1,
+    backgroundColor: 'white',
+  },
+  loaderContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#F5F5F5',
+    backgroundColor: 'white',
   },
-});
+}); 
