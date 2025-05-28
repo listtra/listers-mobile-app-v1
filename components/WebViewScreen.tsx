@@ -31,117 +31,200 @@ const WebViewScreen: React.FC<WebViewScreenProps> = ({
     
     // Add a query parameter to indicate authenticated state to the web app
     const separator = baseUrl.includes('?') ? '&' : '?';
-    return `${baseUrl}${separator}isNativeAuth=true`;
+    return `${baseUrl}${separator}isNativeAuth=true&token=${encodeURIComponent(tokens.accessToken || '')}`;
   };
 
   // Inject auth tokens to WebView for seamless authentication
   const injectTokensToWebView = () => {
     if (!webViewRef.current || !tokens.accessToken || !tokens.refreshToken) return;
     
-    console.log('Injecting tokens to WebView');
-    
-    // Determine which page to redirect to based on current context
-    const desiredPage = uri.includes('/profile') ? '/profile' : (uri.includes('/liked') ? '/liked' : '/listings');
+    console.log('Injecting tokens to WebView with:', {
+      accessToken: tokens.accessToken.substring(0, 10) + '...',
+      refreshToken: tokens.refreshToken.substring(0, 10) + '...'
+    });
     
     const script = `
       (function() {
         try {
-          // Ensure safeStorage exists
-          if (!window.safeStorage) {
-            console.log('Creating safeStorage wrapper');
-            window.fallbackStorage = window.fallbackStorage || {};
-            window.safeStorage = {
-              getItem: function(key) {
-                try {
-                  return window.localStorage.getItem(key);
-                } catch (e) {
-                  console.log('Using fallback storage for get:', key);
-                  return window.fallbackStorage[key] || null;
-                }
-              },
-              setItem: function(key, value) {
-                try {
-                  window.localStorage.setItem(key, value);
-                } catch (e) {
-                  console.log('Using fallback storage for set:', key);
-                  window.fallbackStorage[key] = value;
-                }
-              },
-              removeItem: function(key) {
-                try {
-                  window.localStorage.removeItem(key);
-                } catch (e) {
-                  console.log('Using fallback storage for remove:', key);
-                  delete window.fallbackStorage[key];
-                }
-              }
-            };
-          }
+          // STEP 1: Set tokens in localStorage
+          console.log('Setting auth tokens in web app localStorage');
+          localStorage.setItem('token', '${tokens.accessToken}');
+          localStorage.setItem('refreshToken', '${tokens.refreshToken}');
           
-          // Set tokens using safe storage wrapper
-          window.safeStorage.setItem('token', '${tokens.accessToken}');
-          window.safeStorage.setItem('refreshToken', '${tokens.refreshToken}');
-          console.log('Tokens successfully injected');
+          // STEP 2: Check if the web app's auth API is available
+          console.log('Web app API modules available:', {
+            authAPI: typeof window.authAPI !== 'undefined',
+            api: typeof window.api !== 'undefined'
+          });
           
-          // Force the web app to recognize auth immediately
-          window.isNativeAuthenticated = true;
-          document.documentElement.classList.add('native-authenticated');
+          // STEP 3: Call API directly using fetch first to ensure token is valid
+          const API_URL = typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL 
+                        ? process.env.NEXT_PUBLIC_API_URL 
+                        : 'https://backend.listtra.com';
           
-          // Store the intended destination to prevent default redirects
-          if (!window.sessionStorage.getItem('intendedDestination')) {
-            try {
-              window.sessionStorage.setItem('intendedDestination', '${desiredPage}');
-            } catch (e) {
-              window.fallbackStorage.intendedDestination = '${desiredPage}';
+          console.log('Fetching profile from API:', API_URL + '/api/profile/');
+          
+          fetch(API_URL + '/api/profile/', {
+            method: 'GET',
+            headers: {
+              'Authorization': 'Bearer ${tokens.accessToken}',
+              'Content-Type': 'application/json'
             }
-          }
-          
-          // Specifically for profile page, ensure we stay on profile
-          if ('${desiredPage}' === '/profile') {
-            // If we're not on the profile page but should be, redirect there
-            if (window.location.pathname !== '/profile' && !window.location.pathname.includes('/profile')) {
-              console.log('Redirecting back to profile after auth');
-              window.location.href = '/profile';
+          })
+          .then(response => {
+            console.log('Profile API response status:', response.status);
+            if (!response.ok) {
+              throw new Error('Profile fetch failed with status: ' + response.status);
+            }
+            return response.json();
+          })
+          .then(userData => {
+            console.log('Profile data fetched successfully:', userData);
+            
+            // STEP 4: Store user data for other scripts to access
+            window.userData = userData;
+            
+            // IMPORTANT: Explicitly set the user data in localStorage to ensure it's available
+            // This is crucial for the isOwner check in listing details
+            try {
+              localStorage.setItem('userData', JSON.stringify(userData));
+              console.log('User data stored in localStorage');
+            } catch (e) {
+              console.error('Failed to store userData in localStorage:', e);
             }
             
-            // Add special profile page styles for mobile
-            const profileStyle = document.createElement('style');
-            profileStyle.textContent = \`
-              nav, header, .navbar, .navigation { 
-                display: none !important; 
+            // STEP 5: Try to call the web app's login function directly if available
+            if (typeof window.authAPI !== 'undefined') {
+              console.log('Calling authAPI methods directly');
+              if (typeof window.authAPI.setUser === 'function') {
+                window.authAPI.setUser(userData);
               }
-              .footer {
-                display: none !important;
+              
+              // Force user context update if setUser isn't enough
+              if (typeof window.authAPI.setUserContext === 'function') {
+                window.authAPI.setUserContext({
+                  user: userData,
+                  isLoading: false,
+                  error: null
+                });
               }
-              .profile-container {
-                padding-top: 20px !important;
-                max-width: 100% !important;
+            }
+            
+            // STEP 6: Create and dispatch auth event for web app to handle
+            const authEvent = new CustomEvent('auth-user-loaded', { detail: userData });
+            document.dispatchEvent(authEvent);
+            
+            // STEP 7: Check if we're on a listing details page and manually fix the isOwner check
+            setTimeout(() => {
+              const path = window.location.pathname;
+              if (path.includes('/listings/') && path.includes('product_id') || 
+                  /\\/listings\\/[\\w-]+\\/[\\w-]+/.test(path)) {
+                console.log('On listing details page, ensuring isOwner is checked correctly');
+                
+                // Fix for ListItem component
+                try {
+                  // Find the ListItem component and inject the user data
+                  // Look for elements that indicate this is a listing detail page
+                  const listItemComponent = document.querySelector('[data-listing-item="true"]') || 
+                                          document.querySelector('.min-h-screen.mt-28');
+                                          
+                  if (listItemComponent) {
+                    console.log('Found listing item component, checking seller ID');
+                    
+                    // Try to find seller ID in the page
+                    const sellerNameElement = document.querySelector('a[href^="/profiles/"]');
+                    if (sellerNameElement) {
+                      const sellerName = sellerNameElement.textContent.trim();
+                      console.log('Found seller name:', sellerName);
+                      
+                      // Check if there's any data attribute with seller ID
+                      const sellerIdElement = document.querySelector('[data-seller-id]');
+                      const sellerId = sellerIdElement ? sellerIdElement.getAttribute('data-seller-id') : null;
+                      
+                      console.log('Comparing seller ID with user ID:', {
+                        sellerId: sellerId,
+                        userId: userData.id
+                      });
+                      
+                      // Force update React component to recognize user as owner if IDs match
+                      if (sellerId && String(userData.id) === String(sellerId)) {
+                        console.log('User is owner, updating UI');
+                        
+                        // Show owner-only UI elements
+                        const ownerElements = document.querySelectorAll('[data-owner-only="true"]');
+                        ownerElements.forEach(el => {
+                          el.style.display = 'flex';
+                        });
+                        
+                        // Hide non-owner UI elements
+                        const nonOwnerElements = document.querySelectorAll('[data-non-owner-only="true"]');
+                        nonOwnerElements.forEach(el => {
+                          el.style.display = 'none';
+                        });
+                      }
+                    }
+                  }
+                } catch (e) {
+                  console.error('Error fixing isOwner check:', e);
+                }
               }
-              /* Fix for safe area on profile page */
-              body {
-                padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left) !important;
+            }, 1000);
+            
+            // STEP 8: Now modify the UI directly - focus on navbar
+            setTimeout(() => {
+              console.log('Updating navbar UI elements');
+              
+              // Find and update navbar elements
+              const navbarContainer = document.querySelector('.md\\\\:flex.items-center.gap-1.sm\\\\:gap-4.ml-auto');
+              if (navbarContainer) {
+                console.log('Found navbar container, updating visibility');
+                
+                // Make all links visible
+                const links = navbarContainer.querySelectorAll('a, button');
+                links.forEach(link => {
+                  if (!link.classList.contains('md:hidden')) {
+                    console.log('Making visible:', link.href || link.textContent);
+                    link.style.display = 'flex';
+                  }
+                });
+                
+                // Set profile initial if we have a profile link
+                const profileLink = navbarContainer.querySelector('a[href="/profile"]');
+                if (profileLink) {
+                  const initial = profileLink.querySelector('span, div');
+                  if (initial && userData.nickname) {
+                    initial.textContent = userData.nickname.charAt(0).toUpperCase();
+                  }
+                }
+              } else {
+                console.log('Navbar container not found, will retry');
+                // If navbar not found, try again later (page might be still loading)
+                setTimeout(() => {
+                  const navbarContainer = document.querySelector('.md\\\\:flex.items-center.gap-1.sm\\\\:gap-4.ml-auto');
+                  if (navbarContainer) {
+                    console.log('Found navbar container on second try');
+                    const links = navbarContainer.querySelectorAll('a, button');
+                    links.forEach(link => {
+                      if (!link.classList.contains('md:hidden')) {
+                        link.style.display = 'flex';
+                      }
+                    });
+                  } else {
+                    console.log('Navbar container not found even on retry');
+                  }
+                }, 1000);
               }
-            \`;
-            document.head.appendChild(profileStyle);
-          }
-          
-          // If we're on a protected page that redirected to login, go back to intended destination
-          if (window.location.pathname.includes('/auth/')) {
-            window.location.href = '${desiredPage}';
-          }
+            }, 500);
+          })
+          .catch(error => {
+            console.error('Error in auth flow:', error);
+          });
           
         } catch(e) {
           console.error('Error injecting tokens:', e);
-          // Notify native app of error
-          if (window.ReactNativeWebView) {
-            window.ReactNativeWebView.postMessage(JSON.stringify({
-              type: 'ERROR', 
-              message: e.toString()
-            }));
-          }
         }
         
-        true;
+        return true;
       })();
     `;
     
@@ -170,236 +253,197 @@ const WebViewScreen: React.FC<WebViewScreenProps> = ({
       // Give page time to load before injecting tokens
       setTimeout(() => {
         injectTokensToWebView();
-      }, 500);
-    }
-    
-    // Special handling for profile redirects - if we're on profile page and trying to redirect to signin
-    const isProfileRedirect = navState.url.includes('/auth/signin') && 
-                           (uri.includes('/profile') || currentUrl.includes('/profile')) && 
-                           isAuthenticated;
-    
-    // Special handling for like actions that might be redirecting to signin
-    const isLikeRedirect = navState.url.includes('/auth/signin') && 
-                         currentUrl.includes('/listings') && 
-                         isAuthenticated;
-    
-    // Handle redirects to signin page when already authenticated
-    if (navState.url.includes('/auth/signin') && isAuthenticated) {
-      console.log('Detected signin redirect while authenticated, re-injecting tokens');
-      
-      if (webViewRef.current) {
-        // For profile redirects, we need a special script that also returns to the profile page
-        if (isProfileRedirect) {
-          const profileRedirectScript = `
-            console.log('Re-injecting tokens and returning to profile page');
-            
-            // Ensure safeStorage exists
-            if (!window.safeStorage) {
-              console.log('Creating safeStorage wrapper for redirect');
-              window.fallbackStorage = window.fallbackStorage || {};
-              window.safeStorage = {
-                getItem: function(key) {
-                  try {
-                    return window.localStorage.getItem(key);
-                  } catch (e) {
-                    console.log('Using fallback storage for get:', key);
-                    return window.fallbackStorage[key] || null;
-                  }
-                },
-                setItem: function(key, value) {
-                  try {
-                    window.localStorage.setItem(key, value);
-                  } catch (e) {
-                    console.log('Using fallback storage for set:', key);
-                    window.fallbackStorage[key] = value;
-                  }
-                },
-                removeItem: function(key) {
-                  try {
-                    window.localStorage.removeItem(key);
-                  } catch (e) {
-                    console.log('Using fallback storage for remove:', key);
-                    delete window.fallbackStorage[key];
-                  }
+        
+        // Check if we're navigating to a listing detail page
+        const url = new URL(navState.url);
+        const path = url.pathname;
+        const isListingDetail = path.includes('/listings/') && 
+                               (/\/[^\/]+\/[^\/]+\/?$/.test(path) || // Pattern: /listings/slug/id
+                                path.includes('product_id'));
+
+        if (isListingDetail) {
+          console.log('Navigated to a listing detail page, applying isOwner fix');
+          
+          // Apply a specific script for listing details pages
+          if (webViewRef.current) {
+            const listingDetailScript = `
+              (function() {
+                try {
+                  console.log('Applying isOwner fix for listing detail page');
+                  
+                  // Wait for the page to fully load
+                  setTimeout(() => {
+                    // Try to get user data
+                    let userData = null;
+                    try {
+                      // First try window.userData
+                      if (window.userData) {
+                        userData = window.userData;
+                      } else {
+                        // Then try localStorage
+                        const userDataStr = localStorage.getItem('userData');
+                        if (userDataStr) {
+                          userData = JSON.parse(userDataStr);
+                        }
+                      }
+                      
+                      if (!userData || !userData.id) {
+                        console.error('No user data available for isOwner check');
+                        return;
+                      }
+                      
+                      console.log('User data for isOwner check:', userData);
+                      
+                      // Force the isOwner check by injecting userData into the AuthContext
+                      if (typeof window.authAPI !== 'undefined') {
+                        console.log('Using authAPI to update user context');
+                        if (typeof window.authAPI.setUser === 'function') {
+                          window.authAPI.setUser(userData);
+                        }
+                      }
+                      
+                      // Give time for React to update
+                      setTimeout(() => {
+                        // Direct DOM manipulation for owner-specific UI elements
+                        const listItemComponent = document.querySelector('.min-h-screen.mt-28');
+                        if (listItemComponent) {
+                          console.log('Found listing component, checking seller details');
+                          
+                          // Try to find seller info
+                          const sellerElem = document.querySelector('a[href^="/profiles/"]');
+                          if (sellerElem) {
+                            const sellerName = sellerElem.textContent.trim();
+                            console.log('Found seller:', sellerName);
+                            
+                            // Try to find any data attributes with seller ID
+                            document.querySelectorAll('[data-seller-id], [data-listing-seller]').forEach(elem => {
+                              const sellerId = elem.getAttribute('data-seller-id') || elem.getAttribute('data-listing-seller');
+                              if (sellerId) {
+                                console.log('Found seller ID:', sellerId, 'User ID:', userData.id);
+                                
+                                // Compare IDs (as strings to be safe)
+                                if (String(sellerId) === String(userData.id)) {
+                                  console.log('Current user is the owner, updating UI');
+                                  
+                                  // Show Edit button if it exists but is hidden
+                                  const editButton = document.querySelector('button[data-owner="edit"], .flex.items-center.gap-2 button');
+                                  if (editButton && window.getComputedStyle(editButton).display === 'none') {
+                                    editButton.style.display = 'flex';
+                                    
+                                    // Also ensure parent containers are visible
+                                    let parent = editButton.parentElement;
+                                    while (parent) {
+                                      if (window.getComputedStyle(parent).display === 'none') {
+                                        parent.style.display = 'flex';
+                                      }
+                                      parent = parent.parentElement;
+                                    }
+                                  }
+                                  
+                                  // Show other owner-only elements
+                                  const ownerElements = document.querySelectorAll('[data-owner="true"], .flex.justify-between button');
+                                  ownerElements.forEach(el => {
+                                    el.style.display = 'flex';
+                                  });
+                                  
+                                  // Hide non-owner elements
+                                  const nonOwnerElements = document.querySelectorAll('[data-owner="false"]');
+                                  nonOwnerElements.forEach(el => {
+                                    el.style.display = 'none';
+                                  });
+                                }
+                              }
+                            });
+                            
+                            // If no data attributes found, try more aggressive approach
+                            if (sellerName) {
+                              // If we have seller name from profile page, try fetching their ID
+                              fetch(\`\${API_URL}/api/users/by-name/\${encodeURIComponent(sellerName)}\`, {
+                                headers: {
+                                  'Authorization': 'Bearer ' + localStorage.getItem('token')
+                                }
+                              })
+                              .then(response => response.json())
+                              .then(sellerData => {
+                                if (sellerData && sellerData.id) {
+                                  console.log('Fetched seller ID:', sellerData.id, 'User ID:', userData.id);
+                                  
+                                  // Compare IDs
+                                  if (String(sellerData.id) === String(userData.id)) {
+                                    console.log('Current user is the owner via seller name lookup');
+                                    
+                                    // Update UI to show owner controls
+                                    document.querySelectorAll('button:contains("Edit"), button:contains("Delete")').forEach(btn => {
+                                      btn.style.display = 'flex';
+                                    });
+                                  }
+                                }
+                              })
+                              .catch(error => {
+                                console.error('Error fetching seller data:', error);
+                              });
+                            }
+                          }
+                        }
+                      }, 500);
+                    }, 300);
+                  
+                } catch(e) {
+                  console.error('Error in listing detail script:', e);
                 }
-              };
-            }
+                
+                return true;
+              })();
+            `;
             
-            window.safeStorage.setItem('token', '${tokens.accessToken}');
-            window.safeStorage.setItem('refreshToken', '${tokens.refreshToken}');
-            
-            // Update auth state
-            window.isNativeAuthenticated = true;
-            document.documentElement.classList.add('native-authenticated');
-            
-            // Force redirect to profile
-            window.location.href = '/profile';
-            
-            true;
-          `;
-          webViewRef.current.injectJavaScript(profileRedirectScript);
-        } else if (isLikeRedirect) {
-          // For like redirects, we need a special script that also performs the like action
-          const likeRedirectScript = `
-            console.log('Re-injecting tokens and handling like action');
-            
-            // Ensure safeStorage exists
-            if (!window.safeStorage) {
-              console.log('Creating safeStorage wrapper for redirect');
-              window.fallbackStorage = window.fallbackStorage || {};
-              window.safeStorage = {
-                getItem: function(key) {
-                  try {
-                    return window.localStorage.getItem(key);
-                  } catch (e) {
-                    console.log('Using fallback storage for get:', key);
-                    return window.fallbackStorage[key] || null;
-                  }
-                },
-                setItem: function(key, value) {
-                  try {
-                    window.localStorage.setItem(key, value);
-                  } catch (e) {
-                    console.log('Using fallback storage for set:', key);
-                    window.fallbackStorage[key] = value;
-                  }
-                },
-                removeItem: function(key) {
-                  try {
-                    window.localStorage.removeItem(key);
-                  } catch (e) {
-                    console.log('Using fallback storage for remove:', key);
-                    delete window.fallbackStorage[key];
-                  }
-                }
-              };
-            }
-            
-            window.safeStorage.setItem('token', '${tokens.accessToken}');
-            window.safeStorage.setItem('refreshToken', '${tokens.refreshToken}');
-            
-            // Update auth state
-            window.isNativeAuthenticated = true;
-            document.documentElement.classList.add('native-authenticated');
-            
-            // Go back to the previous page (where the like button was)
-            window.location.href = document.referrer || '/listings';
-            
-            // Store in sessionStorage that we need to re-trigger like
-            try {
-              sessionStorage.setItem('pendingLikeAction', 'true');
-            } catch (e) {
-              window.fallbackStorage.pendingLikeAction = 'true';
-            }
-            
-            true;
-          `;
-          webViewRef.current.injectJavaScript(likeRedirectScript);
-        } else {
-          // Regular redirect handling
-          const redirectScript = `
-            console.log('Re-injecting tokens after redirect');
-            
-            // Ensure safeStorage exists
-            if (!window.safeStorage) {
-              console.log('Creating safeStorage wrapper for redirect');
-              window.fallbackStorage = window.fallbackStorage || {};
-              window.safeStorage = {
-                getItem: function(key) {
-                  try {
-                    return window.localStorage.getItem(key);
-                  } catch (e) {
-                    console.log('Using fallback storage for get:', key);
-                    return window.fallbackStorage[key] || null;
-                  }
-                },
-                setItem: function(key, value) {
-                  try {
-                    window.localStorage.setItem(key, value);
-                  } catch (e) {
-                    console.log('Using fallback storage for set:', key);
-                    window.fallbackStorage[key] = value;
-                  }
-                },
-                removeItem: function(key) {
-                  try {
-                    window.localStorage.removeItem(key);
-                  } catch (e) {
-                    console.log('Using fallback storage for remove:', key);
-                    delete window.fallbackStorage[key];
-                  }
-                }
-              };
-            }
-            
-            window.safeStorage.setItem('token', '${tokens.accessToken}');
-            window.safeStorage.setItem('refreshToken', '${tokens.refreshToken}');
-            window.isNativeAuthenticated = true;
-            document.documentElement.classList.add('native-authenticated');
-            window.location.href = document.referrer || '/listings';
-            true;
-          `;
-          webViewRef.current.injectJavaScript(redirectScript);
+            webViewRef.current.injectJavaScript(listingDetailScript);
+          }
         }
-      }
-    }
-    
-    // For profile page, ensure we don't get redirected to listings after auth
-    if (uri.includes('/profile') && navState.url.includes('/listings') && isAuthenticated) {
-      console.log('Preventing redirect from profile to listings');
-      if (webViewRef.current) {
-        webViewRef.current.stopLoading();
-        const redirectToProfileScript = `
-          console.log('Redirecting back to profile');
-          window.location.href = '/profile';
-          true;
-        `;
-        setTimeout(() => {
-          webViewRef.current?.injectJavaScript(redirectToProfileScript);
-        }, 100);
-      }
-    }
-    
-    // If returning to a listing page from a redirect, check for pending actions
-    if ((navState.url.includes('/listings') || navState.url.includes('/liked')) && 
-        isAuthenticated) {
-      setTimeout(() => {
+        
+        // Add a script to force auth UI elements to be visible
         if (webViewRef.current) {
-          const checkPendingActionsScript = `
-            // Ensure fallbackStorage exists
-            window.fallbackStorage = window.fallbackStorage || {};
-            
-            // Check if we have a pending like action to complete
-            let hasPendingAction = false;
-            try {
-              hasPendingAction = sessionStorage.getItem('pendingLikeAction') === 'true';
-              if (hasPendingAction) {
-                sessionStorage.removeItem('pendingLikeAction');
+          const forceAuthScript = `
+            (function() {
+              try {
+                console.log('Force auth UI visibility after navigation');
+                
+                // Give the page time to fully render
+                setTimeout(() => {
+                  // Find and update navbar elements
+                  const navbarContainer = document.querySelector('.md\\:flex.items-center.gap-1.sm\\:gap-4.ml-auto');
+                  if (navbarContainer) {
+                    console.log('Found navbar container, ensuring visibility');
+                    const links = navbarContainer.querySelectorAll('a, button');
+                    links.forEach(link => {
+                      if (!link.classList.contains('md:hidden')) {
+                        link.style.display = 'flex';
+                      }
+                    });
+                  }
+                  
+                  // Add force-visible class to body to ensure auth elements stay visible
+                  document.body.classList.add('force-auth-visible');
+                  
+                  // Add CSS to ensure auth elements stay visible
+                  const style = document.createElement('style');
+                  style.textContent = \`
+                    .force-auth-visible .md\\:flex.items-center.gap-1.sm\\:gap-4.ml-auto a,
+                    .force-auth-visible .md\\:flex.items-center.gap-1.sm\\:gap-4.ml-auto button:not(.md\\:hidden) {
+                      display: flex !important;
+                    }
+                  \`;
+                  document.head.appendChild(style);
+                }, 500);
+              } catch(e) {
+                console.error('Error in force auth script:', e);
               }
-            } catch (e) {
-              hasPendingAction = window.fallbackStorage.pendingLikeAction === 'true';
-              if (hasPendingAction) {
-                delete window.fallbackStorage.pendingLikeAction;
-              }
-            }
-            
-            if (hasPendingAction) {
-              console.log('Completing pending like action');
-              
-              // Find any like button that was previously clicked
-              setTimeout(() => {
-                const likeButtons = document.querySelectorAll('.like-button:not(.liked)');
-                if (likeButtons.length > 0) {
-                  // Click the first available like button
-                  likeButtons[0].click();
-                }
-              }, 1000);
-            }
-            true;
+              return true;
+            })();
           `;
-          webViewRef.current.injectJavaScript(checkPendingActionsScript);
+          
+          webViewRef.current.injectJavaScript(forceAuthScript);
         }
-      }, 1500);
+      }, 500);
     }
   };
 
@@ -503,6 +547,113 @@ const WebViewScreen: React.FC<WebViewScreenProps> = ({
           console.log('Already authenticated in native app, reinjecting tokens');
           injectTokensToWebView();
           
+          // Special handling for listing details pages
+          if (data.action === 'check_owner' || data.page === 'listing_details') {
+            console.log('Handling ownership check for listing details');
+            
+            if (webViewRef.current) {
+              // Inject a script to force isOwner check
+              const ownerCheckScript = `
+                (function() {
+                  try {
+                    console.log('Forcing isOwner check for listing details');
+                    
+                    // Get user data
+                    let userData = null;
+                    if (window.userData) {
+                      userData = window.userData;
+                    } else {
+                      const userDataStr = localStorage.getItem('userData');
+                      if (userDataStr) {
+                        userData = JSON.parse(userDataStr);
+                      }
+                    }
+                    
+                    if (!userData || !userData.id) {
+                      console.error('No user data available for isOwner check');
+                      return;
+                    }
+                    
+                    // Get the listing ID from URL or data
+                    const path = window.location.pathname;
+                    const matches = path.match(/\\/listings\\/[^\\/]+\\/([^\\/]+)/);
+                    const listingId = ${data.id ? `'${data.id}'` : 'matches ? matches[1] : null'};
+                    
+                    if (!listingId) {
+                      console.error('Could not determine listing ID');
+                      return;
+                    }
+                    
+                    console.log('Checking ownership for listing:', listingId);
+                    
+                    // Make API call to get listing details including seller_id
+                    const API_URL = typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL 
+                                  ? process.env.NEXT_PUBLIC_API_URL 
+                                  : 'https://backend.listtra.com';
+                    
+                    fetch(\`\${API_URL}/api/listings/\${listingId}/\`, {
+                      headers: {
+                        'Authorization': 'Bearer ' + localStorage.getItem('token')
+                      }
+                    })
+                    .then(response => response.json())
+                    .then(listingData => {
+                      if (listingData && (listingData.seller_id || listingData.user_id)) {
+                        const sellerId = listingData.seller_id || listingData.user_id;
+                        console.log('Listing seller ID:', sellerId, 'User ID:', userData.id);
+                        
+                        // Compare IDs
+                        if (String(sellerId) === String(userData.id)) {
+                          console.log('MATCH: User is the owner of this listing');
+                          
+                          // Force UI update
+                          setTimeout(() => {
+                            // Find and show owner controls
+                            const ownerControls = document.querySelectorAll('.flex.items-center.gap-2 button, .flex.justify-between button');
+                            ownerControls.forEach(btn => {
+                              btn.style.display = 'flex';
+                              
+                              // Make parent containers visible
+                              let parent = btn.parentElement;
+                              for (let i = 0; i < 3 && parent; i++) {
+                                if (window.getComputedStyle(parent).display === 'none') {
+                                  parent.style.display = 'flex';
+                                }
+                                parent = parent.parentElement;
+                              }
+                            });
+                            
+                            // Hide buyer controls
+                            const makeOfferBtn = document.querySelector('button:contains("Make Offer")');
+                            if (makeOfferBtn) {
+                              makeOfferBtn.style.display = 'none';
+                            }
+                            
+                            // Fix UI layout if needed
+                            document.querySelectorAll('.flex.flex-col.gap-4.mt-4').forEach(el => {
+                              el.style.display = 'flex';
+                            });
+                          }, 200);
+                        } else {
+                          console.log('NOT MATCH: User is not the owner');
+                        }
+                      }
+                    })
+                    .catch(error => {
+                      console.error('Error fetching listing details:', error);
+                    });
+                    
+                  } catch(e) {
+                    console.error('Error in owner check script:', e);
+                  }
+                  return true;
+                })();
+              `;
+              
+              webViewRef.current.injectJavaScript(ownerCheckScript);
+            }
+          }
+          
           // If there was a specific action (like a like button), send message to retry it
           if (data.action && webViewRef.current) {
             setTimeout(() => {
@@ -572,6 +723,185 @@ const WebViewScreen: React.FC<WebViewScreenProps> = ({
             }, 200);
           }
         }
+      } else if (data.type === 'CHECK_OWNER') {
+        // WebView is requesting an ownership check for a listing
+        console.log('Received CHECK_OWNER request for listing:', data.listingId);
+        
+        if (isAuthenticated && tokens.accessToken && webViewRef.current) {
+          // First ensure tokens are injected
+          injectTokensToWebView();
+          
+          // Then inject a script to specifically check ownership for this listing
+          setTimeout(() => {
+            if (webViewRef.current) {
+              const checkOwnerScript = `
+                (function() {
+                  try {
+                    console.log('Checking ownership for listing ID: ${data.listingId}');
+                    
+                    // Get user data
+                    let userData = null;
+                    if (window.userData) {
+                      userData = window.userData;
+                    } else {
+                      const userDataStr = localStorage.getItem('userData');
+                      if (userDataStr) {
+                        userData = JSON.parse(userDataStr);
+                      }
+                    }
+                    
+                    if (!userData || !userData.id) {
+                      console.error('No user data available for ownership check');
+                      
+                      // Notify web app that user is not the owner (missing data)
+                      window.dispatchEvent(new CustomEvent('ownership-result', { 
+                        detail: { 
+                          isOwner: false,
+                          listingId: '${data.listingId}',
+                          error: 'No user data'
+                        } 
+                      }));
+                      return;
+                    }
+                    
+                    // Make API call to get listing details
+                    const API_URL = typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL 
+                                  ? process.env.NEXT_PUBLIC_API_URL 
+                                  : 'https://backend.listtra.com';
+                    
+                    fetch(\`\${API_URL}/api/listings/${data.listingId}/\`, {
+                      headers: {
+                        'Authorization': 'Bearer ' + localStorage.getItem('token')
+                      }
+                    })
+                    .then(response => {
+                      if (!response.ok) {
+                        throw new Error('Failed to fetch listing: ' + response.status);
+                      }
+                      return response.json();
+                    })
+                    .then(listingData => {
+                      if (listingData) {
+                        const sellerId = listingData.seller_id || listingData.user_id;
+                        console.log('Comparing seller ID:', sellerId, 'with user ID:', userData.id);
+                        
+                        // Compare IDs as strings
+                        const isOwner = String(sellerId) === String(userData.id);
+                        console.log('Ownership check result:', isOwner);
+                        
+                        // Store result for future checks
+                        window.isListingOwner = isOwner;
+                        localStorage.setItem('isListingOwner_' + '${data.listingId}', isOwner);
+                        
+                        // Notify web app of the result
+                        window.dispatchEvent(new CustomEvent('ownership-result', { 
+                          detail: { 
+                            isOwner: isOwner,
+                            listingId: '${data.listingId}',
+                            sellerId: sellerId,
+                            userId: userData.id
+                          } 
+                        }));
+                        
+                        // If owner, update UI
+                        if (isOwner) {
+                          // Give time for React to update
+                          setTimeout(() => {
+                            // Force visible owner-only UI elements
+                            const ownerElements = document.querySelectorAll(
+                              '[data-owner="true"], ' +
+                              'button[title="Edit"], ' +
+                              '.flex.items-center.gap-2 button, ' +
+                              '.flex.justify-between button'
+                            );
+                            
+                            ownerElements.forEach(el => {
+                              el.style.display = 'flex';
+                              
+                              // Make parent containers visible
+                              let parent = el.parentElement;
+                              for (let i = 0; i < 3 && parent; i++) {
+                                if (window.getComputedStyle(parent).display === 'none') {
+                                  parent.style.display = 'flex';
+                                }
+                                parent = parent.parentElement;
+                              }
+                            });
+                            
+                            // Hide non-owner elements
+                            const nonOwnerElements = document.querySelectorAll(
+                              '[data-owner="false"], ' +
+                              'button:contains("Make Offer")'
+                            );
+                            nonOwnerElements.forEach(el => {
+                              el.style.display = 'none';
+                            });
+                          }, 200);
+                        }
+                      } else {
+                        console.error('Listing data is empty');
+                        
+                        // Notify web app that user is not the owner (empty data)
+                        window.dispatchEvent(new CustomEvent('ownership-result', { 
+                          detail: { 
+                            isOwner: false,
+                            listingId: '${data.listingId}',
+                            error: 'Empty listing data'
+                          } 
+                        }));
+                      }
+                    })
+                    .catch(error => {
+                      console.error('Error checking listing ownership:', error);
+                      
+                      // Notify web app that user is not the owner (error)
+                      window.dispatchEvent(new CustomEvent('ownership-result', { 
+                        detail: { 
+                          isOwner: false,
+                          listingId: '${data.listingId}',
+                          error: error.message
+                        } 
+                      }));
+                    });
+                    
+                  } catch(e) {
+                    console.error('Error in ownership check script:', e);
+                    
+                    // Notify web app that user is not the owner (exception)
+                    window.dispatchEvent(new CustomEvent('ownership-result', { 
+                      detail: { 
+                        isOwner: false,
+                        listingId: '${data.listingId}',
+                        error: e.message
+                      } 
+                    }));
+                  }
+                  
+                  return true;
+                })();
+              `;
+              
+              webViewRef.current.injectJavaScript(checkOwnerScript);
+            }
+          }, 300);
+        } else {
+          console.log('User not authenticated, cannot check ownership');
+          
+          // If webview reference exists, let the web app know the user is not authenticated
+          if (webViewRef.current) {
+            const notAuthScript = `
+              window.dispatchEvent(new CustomEvent('ownership-result', { 
+                detail: { 
+                  isOwner: false,
+                  listingId: '${data.listingId}',
+                  error: 'User not authenticated'
+                } 
+              }));
+              true;
+            `;
+            webViewRef.current.injectJavaScript(notAuthScript);
+          }
+        }
       }
     } catch (error) {
       console.error('Failed to process WebView message', error);
@@ -586,310 +916,138 @@ const WebViewScreen: React.FC<WebViewScreenProps> = ({
         // Set marker for native environment
         window.isInNativeApp = true;
         
-        // Initialize auth state to false until tokens are injected
-        window.isNativeAuthenticated = false;
+        // Initialize auth state
+        const hasToken = localStorage.getItem('token') && localStorage.getItem('refreshToken');
+        window.isNativeAuthenticated = hasToken;
         
-        // Add mobile class for styling
-        document.documentElement.classList.add('in-native-app');
-        
-        // Set viewport to respect safe areas
-        const viewportMeta = document.querySelector('meta[name="viewport"]');
-        if (viewportMeta) {
-          viewportMeta.content = 'width=device-width, initial-scale=1, viewport-fit=cover';
-        } else {
-          const meta = document.createElement('meta');
-          meta.name = 'viewport';
-          meta.content = 'width=device-width, initial-scale=1, viewport-fit=cover';
-          document.head.appendChild(meta);
-        }
-        
-        // Add CSS for safe area
-        const safeAreaStyle = document.createElement('style');
-        safeAreaStyle.textContent = \`
-          body {
-            padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
-          }
-          
-          .navbar, .fixed-top, header {
-            padding-top: env(safe-area-inset-top);
-          }
-          
-          .fixed-bottom, footer {
-            padding-bottom: env(safe-area-inset-bottom);
-          }
-        \`;
-        document.head.appendChild(safeAreaStyle);
-        
-        // Create fallback storage if localStorage is not available
-        window.fallbackStorage = {};
-        
-        // Safe localStorage wrapper
-        window.safeStorage = {
-          getItem: function(key) {
-            try {
-              return window.localStorage.getItem(key);
-            } catch (e) {
-              console.log('Using fallback storage for get:', key);
-              return window.fallbackStorage[key] || null;
-            }
-          },
-          setItem: function(key, value) {
-            try {
-              window.localStorage.setItem(key, value);
-            } catch (e) {
-              console.log('Using fallback storage for set:', key);
-              window.fallbackStorage[key] = value;
-            }
-          },
-          removeItem: function(key) {
-            try {
-              window.localStorage.removeItem(key);
-            } catch (e) {
-              console.log('Using fallback storage for remove:', key);
-              delete window.fallbackStorage[key];
-            }
-          }
-        };
-        
-        // Detect if we're on the profile page
-        const isProfilePage = window.location.pathname === '/profile' || 
-                            window.location.href.includes('/profile');
-        
-        // Track original URL to enforce returns after auth
-        const originalPath = window.location.pathname;
-        window.originalPath = originalPath;
-        
-        // If we're on the profile page, override some navigation functions
-        if (isProfilePage) {
-          // Override history.pushState to prevent unwanted redirects
-          const originalPushState = window.history.pushState;
-          window.history.pushState = function() {
-            // Get the URL argument (usually the 3rd one)
-            const urlArg = arguments[2];
-            
-            // If trying to redirect to listings or auth pages, prevent it
-            if (urlArg && (urlArg === '/listings' || urlArg.includes('/auth/'))) {
-              console.log('Prevented redirect from profile to:', urlArg);
-              
-              // Notify the app
-              if (window.ReactNativeWebView) {
-                window.ReactNativeWebView.postMessage(JSON.stringify({
-                  type: 'REDIRECT_PREVENTED',
-                  from: '/profile',
-                  to: urlArg
-                }));
-              }
-              
-              return;
-            }
-            
-            // Otherwise, allow the navigation
-            return originalPushState.apply(this, arguments);
-          };
-          
-          // Override location.replace to prevent unwanted redirects
-          const originalReplace = window.location.replace;
-          window.location.replace = function(url) {
-            if (typeof url === 'string' && (url === '/listings' || url.includes('/auth/'))) {
-              console.log('Prevented location.replace from profile to:', url);
-              
-              // Notify the app
-              if (window.ReactNativeWebView) {
-                window.ReactNativeWebView.postMessage(JSON.stringify({
-                  type: 'REDIRECT_PREVENTED',
-                  from: '/profile',
-                  to: url
-                }));
-              }
-              
-              return;
-            }
-            
-            return originalReplace.call(this, url);
-          };
-        }
-        
-        // Native bridge functions expected by web components
-        
-        // Handle protected actions like likes
-        window.handleProtectedAction = function(action, id) {
-          console.log('Native handleProtectedAction called:', action, id);
-          
-          // Check if we're authenticated in the native app
-          if (window.isNativeAuthenticated) {
-            return true; // Allow the action to proceed
-          }
-          
-          // Not authenticated, inform native app
-          if (window.ReactNativeWebView) {
-            window.ReactNativeWebView.postMessage(JSON.stringify({
-              type: 'AUTH_REQUIRED',
-              action: action,
-              id: id
-            }));
-          }
-          
-          return false; // Don't proceed with the action
-        };
-        
-        // Navigation from web to native screens
-        window.navigateInNative = function(route) {
-          console.log('Native navigation requested to:', route);
-          if (window.ReactNativeWebView) {
-            window.ReactNativeWebView.postMessage(JSON.stringify({
-              type: 'NAVIGATE',
-              route: route
-            }));
-          }
-        };
-        
-        // Check for existing tokens
-        try {
-          const hasTokens = !!window.safeStorage.getItem('token') && 
-                          !!window.safeStorage.getItem('refreshToken');
-          if (hasTokens) {
-            window.isNativeAuthenticated = true;
-            document.documentElement.classList.add('native-authenticated');
-          }
-        } catch (storageError) {
-          console.error('Error accessing storage:', storageError);
-        }
-        
-        // Listen for logout events from the web app
+        // Simple storage event listener to handle auth changes
         window.addEventListener('storage', function(e) {
-          if (e.key === 'token' && !e.newValue) {
-            // Token was removed, notify native app
+          // If token is set or removed, notify the app
+          if (e.key === 'token') {
             if (window.ReactNativeWebView) {
               window.ReactNativeWebView.postMessage(JSON.stringify({
-                type: 'TOKEN_REMOVED',
-                key: 'token'
+                type: e.newValue ? 'TOKEN_CHANGED' : 'TOKEN_REMOVED',
+                key: 'token',
+                value: e.newValue
               }));
             }
           }
         });
         
-        // Helper to enhance like buttons with proper data attributes
-        function enhanceLikeButtons() {
-          try {
-            // Find all like buttons that don't have data-id attribute
-            const likeButtons = document.querySelectorAll('.like-button:not([data-id])');
-            likeButtons.forEach(button => {
-              // Make sure action type is set
-              if (!button.hasAttribute('data-action-type')) {
-                button.setAttribute('data-action-type', 'like');
-              }
-              
-              // Try to find the listing ID from nearby elements or parent card
-              let listingId = '';
-              
-              // Option 1: Check if there's a data-id on the button already
-              if (button.hasAttribute('data-id')) {
-                listingId = button.getAttribute('data-id');
-              } 
-              // Option 2: Look for a parent element with listing ID data
-              else {
-                // Check if we're in a listing card
-                const listingCard = button.closest('[data-listing-id]');
-                if (listingCard) {
-                  listingId = listingCard.getAttribute('data-listing-id');
-                }
-                
-                // Check URL for product ID (common pattern in many web apps)
-                if (!listingId) {
-                  const urlMatch = window.location.pathname.match(/\\/listings\\/[^\\/]+\\/([^\\/]+)/);
-                  if (urlMatch && urlMatch[1]) {
-                    listingId = urlMatch[1];
-                  }
-                }
-                
-                // If we found an ID, set it on the button
-                if (listingId) {
-                  button.setAttribute('data-id', listingId);
-                }
-              }
-            });
-          } catch (e) {
-            console.error('Error enhancing like buttons:', e);
-          }
-        }
-        
-        // Run initially
-        enhanceLikeButtons();
-        
-        // And run again after content changes (with mutation observer)
-        const observer = new MutationObserver(function(mutations) {
-          enhanceLikeButtons();
+        // Add helper method for listing details page to check ownership
+        window.checkListingOwnership = function(listingId) {
+          console.log('Web requesting ownership check for listing:', listingId);
           
-          // If we're on profile page, also enforce we stay on the profile
-          if (isProfilePage) {
-            // Check if we've been redirected away
-            if (window.location.pathname !== '/profile' && !window.location.pathname.includes('/profile')) {
-              console.log('Detected navigation away from profile, redirecting back');
-              window.location.href = '/profile';
-            }
-          }
-        });
-        
-        // Start observing the document with the configured parameters
-        observer.observe(document.body, { childList: true, subtree: true });
-        
-        // Simple click handler with error handling
-        document.addEventListener('click', function(e) {
-          try {
-            // Find auth-required elements
-            const authElement = e.target.closest('[data-requires-auth], .like-button, .chat-button, .profile-action');
+          // Return a promise that resolves with the ownership result
+          return new Promise((resolve, reject) => {
+            // Set up event listener for the result
+            const handleOwnershipResult = (event) => {
+              if (event.detail && event.detail.listingId === listingId) {
+                // Clean up event listener
+                window.removeEventListener('ownership-result', handleOwnershipResult);
+                
+                if (event.detail.error) {
+                  reject(new Error(event.detail.error));
+                } else {
+                  resolve(event.detail.isOwner);
+                }
+              }
+            };
             
-            if (authElement && !window.isNativeAuthenticated) {
-              e.preventDefault();
-              e.stopPropagation();
-              
-              // Extract action type and ID from data attributes if available
-              const actionType = authElement.getAttribute('data-action-type') || 'unknown';
-              const actionId = authElement.getAttribute('data-id') || '';
-              
-              // Inform native app
+            // Listen for the ownership result
+            window.addEventListener('ownership-result', handleOwnershipResult);
+            
+            // Request the ownership check
+            if (window.ReactNativeWebView) {
               window.ReactNativeWebView.postMessage(JSON.stringify({
-                type: 'AUTH_REQUIRED',
-                action: actionType,
-                id: actionId
+                type: 'CHECK_OWNER',
+                listingId: listingId
               }));
+            } else {
+              // Reject if we can't communicate with the native app
+              reject(new Error('ReactNativeWebView not available'));
             }
-          } catch (clickError) {
-            console.error('Error in click handler:', clickError);
-          }
-        }, true);
+            
+            // Set a timeout to prevent hanging
+            setTimeout(() => {
+              window.removeEventListener('ownership-result', handleOwnershipResult);
+              reject(new Error('Ownership check timed out'));
+            }, 5000);
+          });
+        };
         
-        // Safe API request method
-        window.makeAuthenticatedRequest = function(url, options = {}) {
-          try {
-            const token = window.safeStorage.getItem('token');
-            if (token) {
-              options = options || {};
-              options.headers = options.headers || {};
-              options.headers.Authorization = 'Bearer ' + token;
+        // Add a function to auto-check ownership on listing detail pages
+        window.autoCheckListingOwnership = function() {
+          const path = window.location.pathname;
+          // Check if we're on a listing detail page
+          if (path.includes('/listings/')) {
+            // Extract listing ID from URL
+            const matches = path.match(/\\/listings\\/[^\\/]+\\/([^\\/]+)/);
+            if (matches && matches[1]) {
+              const listingId = matches[1];
+              console.log('Auto-checking ownership for listing:', listingId);
+              
+              // Request ownership check
+              window.checkListingOwnership(listingId)
+                .then(isOwner => {
+                  console.log('Auto ownership check result:', isOwner);
+                  
+                  // If owner, update UI immediately
+                  if (isOwner) {
+                    // Force visible owner-only UI elements
+                    setTimeout(() => {
+                      document.querySelectorAll('[data-owner="true"], button[title="Edit"], .flex.items-center.gap-2 button, .flex.justify-between button').forEach(el => {
+                        el.style.display = 'flex';
+                        
+                        // Make parent containers visible
+                        let parent = el.parentElement;
+                        for (let i = 0; i < 3 && parent; i++) {
+                          if (window.getComputedStyle(parent).display === 'none') {
+                            parent.style.display = 'flex';
+                          }
+                          parent = parent.parentElement;
+                        }
+                      });
+                      
+                      // Hide non-owner elements
+                      document.querySelectorAll('[data-owner="false"], button:contains("Make Offer")').forEach(el => {
+                        el.style.display = 'none';
+                      });
+                    }, 500);
+                  }
+                })
+                .catch(error => {
+                  console.error('Auto ownership check failed:', error);
+                });
             }
-            return fetch(url, options);
-          } catch (fetchError) {
-            console.error('Error making authenticated request:', fetchError);
-            return fetch(url, options);
           }
         };
         
-        // Request auth state from native
-        setTimeout(function() {
-          try {
-            if (window.ReactNativeWebView) {
-              window.ReactNativeWebView.postMessage(JSON.stringify({
-                type: 'GET_AUTH_STATE'
-              }));
-            }
-          } catch (timerError) {
-            console.error('Error requesting auth state:', timerError);
+        // Basic helper function to make authenticated requests
+        window.makeAuthenticatedRequest = function(url, options = {}) {
+          const token = localStorage.getItem('token');
+          if (token) {
+            options = options || {};
+            options.headers = options.headers || {};
+            options.headers.Authorization = 'Bearer ' + token;
           }
+          return fetch(url, options);
+        };
+        
+        // Request auth state from native after a delay
+        setTimeout(function() {
+          if (window.ReactNativeWebView) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'GET_AUTH_STATE'
+            }));
+          }
+          
+          // Auto-check ownership if on listing detail page
+          setTimeout(window.autoCheckListingOwnership, 1000);
         }, 500);
         
-      } catch (globalError) {
-        console.error('Error in initialization:', globalError);
+      } catch (error) {
+        console.error('Error in WebView initialization:', error);
       }
     })();
     
@@ -918,11 +1076,118 @@ const WebViewScreen: React.FC<WebViewScreenProps> = ({
               onLoad={() => {
                 setIsLoading(false);
                 
-                // Always inject tokens when authenticated
-                if (isAuthenticated) {
+                // When page loads, inject tokens if authenticated
+                if (isAuthenticated && tokens.accessToken && tokens.refreshToken) {
                   // Give time for page to fully initialize
                   setTimeout(() => {
                     injectTokensToWebView();
+                    
+                    // Add a debug script to inspect the web app's auth state
+                    if (webViewRef.current) {
+                      const debugScript = `
+                        (function() {
+                          try {
+                            console.log('DEBUG: Inspecting web app auth state');
+                            
+                            // Check tokens in localStorage
+                            const token = localStorage.getItem('token');
+                            const refreshToken = localStorage.getItem('refreshToken');
+                            console.log('Tokens present:', {
+                              hasToken: !!token,
+                              hasRefreshToken: !!refreshToken
+                            });
+                            
+                            // Check for auth-related globals
+                            console.log('Auth globals:', {
+                              hasAuthAPI: typeof window.authAPI !== 'undefined',
+                              hasAuthContext: typeof window.AuthContext !== 'undefined',
+                              isNativeAuthenticated: !!window.isNativeAuthenticated
+                            });
+                            
+                            // Add a more aggressive approach to find and update React's AuthContext
+                            document.addEventListener('DOMContentLoaded', function() {
+                              // Try to find React's __REACT_DEVTOOLS_GLOBAL_HOOK__
+                              if (window.__REACT_DEVTOOLS_GLOBAL_HOOK__) {
+                                console.log('React DevTools hook found, might be able to access contexts');
+                              }
+                              
+                              // Check for React root directly in DOM
+                              const reactRoots = document.querySelectorAll('[data-reactroot]');
+                              console.log('React roots found:', reactRoots.length);
+                              
+                              // Setup a MutationObserver to catch auth UI elements
+                              const observer = new MutationObserver(function(mutations) {
+                                for (let mutation of mutations) {
+                                  if (mutation.type === 'childList') {
+                                    // Look for navbar elements that indicate auth state
+                                    const navbarContainer = document.querySelector('.md\\\\:flex.items-center.gap-1.sm\\\\:gap-4.ml-auto');
+                                    if (navbarContainer) {
+                                      const profileLink = navbarContainer.querySelector('a[href="/profile"]');
+                                      if (profileLink) {
+                                        console.log('Profile link found in navbar:', {
+                                          isVisible: window.getComputedStyle(profileLink).display !== 'none',
+                                          classList: profileLink.className
+                                        });
+                                        
+                                        // Force visibility
+                                        profileLink.style.display = 'flex';
+                                        
+                                        // Also force visibility for other auth elements
+                                        const authLinks = navbarContainer.querySelectorAll('a[href="/liked"], a[href="/chats"], button[title="Logout"]');
+                                        authLinks.forEach(link => {
+                                          link.style.display = 'flex';
+                                        });
+                                      }
+                                    }
+                                  }
+                                }
+                              });
+                              
+                              // Start observing
+                              observer.observe(document.body, {
+                                childList: true,
+                                subtree: true
+                              });
+                            });
+                            
+                            // Try the direct auth API approach again
+                            setTimeout(() => {
+                              fetch('https://backend.listtra.com/api/profile/', {
+                                method: 'GET',
+                                headers: {
+                                  'Authorization': 'Bearer ' + token,
+                                  'Content-Type': 'application/json'
+                                }
+                              })
+                              .then(response => response.json())
+                              .then(userData => {
+                                console.log('User profile:', userData);
+                                
+                                // Now force all auth UI elements to show
+                                const navbarContainer = document.querySelector('.md\\\\:flex.items-center.gap-1.sm\\\\:gap-4.ml-auto');
+                                if (navbarContainer) {
+                                  const links = navbarContainer.querySelectorAll('a, button');
+                                  links.forEach(link => {
+                                    if (!link.classList.contains('md:hidden')) {
+                                      link.style.display = 'flex';
+                                    }
+                                  });
+                                }
+                              })
+                              .catch(error => {
+                                console.error('Error fetching profile in debug script:', error);
+                              });
+                            }, 2000);
+                          } catch(e) {
+                            console.error('Error in debug script:', e);
+                          }
+                          
+                          return true;
+                        })();
+                      `;
+                      
+                      webViewRef.current.injectJavaScript(debugScript);
+                    }
                   }, 300);
                 }
               }}

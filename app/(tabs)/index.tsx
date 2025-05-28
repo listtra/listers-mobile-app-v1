@@ -4,15 +4,22 @@ import WebViewScreen from '../../components/WebViewScreen';
 import { useAuth } from '../../context/AuthContext';
 
 export default function ListingsScreen() {
-  const { isInitializing, isAuthenticated } = useAuth();
+  const { isInitializing, isAuthenticated, tokens } = useAuth();
   const [isReady, setIsReady] = useState(false);
+  const [listingsUrl, setListingsUrl] = useState("https://listtra.com/listings");
   
   // Wait for auth to initialize
   useEffect(() => {
     if (!isInitializing) {
       setIsReady(true);
+      
+      // If we have tokens, append them to the URL to force auth
+      if (isAuthenticated && tokens.accessToken) {
+        // Create a URL with tokens as parameters to force auth
+        setListingsUrl(`https://listtra.com/listings?isNativeAuth=true&token=${encodeURIComponent(tokens.accessToken)}`);
+      }
     }
-  }, [isInitializing]);
+  }, [isInitializing, isAuthenticated, tokens]);
   
   // Show loading spinner while initializing
   if (isInitializing || !isReady) {
@@ -22,14 +29,13 @@ export default function ListingsScreen() {
       </View>
     );
   }
-
-  // We always show listings, but the URL depends on auth state
-  // This allows the web app to handle protected actions like liking items
+  
+  // Simple approach: require authentication for listings
+  // This will properly set up the user session in the WebView
   return (
     <WebViewScreen 
-      uri="https://listtra.com/listings"
-      showLoader={true}
-      // Listings page doesn't require auth, but we still pass the state
+      uri={listingsUrl} 
+      requiresAuth={true}
     />
   );
 }
