@@ -138,6 +138,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 Authorization: `Bearer ${storedTokens.accessToken}`
               }
             });
+            console.log('Profile response(User):', response.data);
             
             setUser(response.data);
           } catch (error) {
