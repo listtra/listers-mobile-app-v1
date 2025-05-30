@@ -155,464 +155,542 @@ const WebViewScreen: React.FC<WebViewScreenProps> = ({
                     data: { listingId: '${listingId}' }
                   }));
                   
-                  // Check if we're already on the right page
-                  if (window.location.pathname === '/chat' && window.location.search.includes('listing=${listingId}')) {
-                    // Wait for page to finish initial loading
-                    document.body.style.opacity = '0.6';
-                    
-                    // Add a simple loading indicator that's guaranteed to be visible
-                    const loadingDiv = document.createElement('div');
-                    loadingDiv.id = 'debug-loading';
-                    loadingDiv.style.position = 'fixed';
-                    loadingDiv.style.top = '50%';
-                    loadingDiv.style.left = '50%';
-                    loadingDiv.style.transform = 'translate(-50%, -50%)';
-                    loadingDiv.style.backgroundColor = 'rgba(0,0,0,0.7)';
-                    loadingDiv.style.color = 'white';
-                    loadingDiv.style.padding = '20px';
-                    loadingDiv.style.borderRadius = '10px';
-                    loadingDiv.style.zIndex = '9999';
-                    loadingDiv.style.maxWidth = '80%';
-                    loadingDiv.style.textAlign = 'center';
-                    loadingDiv.innerHTML = 'Loading conversations... Please wait.';
-                    document.body.appendChild(loadingDiv);
+                  // Check if we've already processed this page to prevent duplication
+                  if (document.getElementById('listtra-chat-processed')) {
+                    console.log('Chat page already processed, skipping to prevent duplication');
+                    window.ReactNativeWebView.postMessage(JSON.stringify({
+                      type: 'LOG',
+                      message: 'Preventing duplicate chat processing',
+                      data: { listingId: '${listingId}' }
+                    }));
+                    return true;
+                  }
                   
-                    // Helper function to ensure a container exists
-                    function ensureContainer() {
-                      let container = document.getElementById('chat-container');
-                      if (!container) {
-                        window.ReactNativeWebView.postMessage(JSON.stringify({
-                          type: 'LOG',
-                          message: 'Container not found, creating a new one'
-                        }));
-                        
-                        // Try to find main element or body as fallback
-                        const mainElement = document.querySelector('main') || document.body;
-                        
-                        // Clear existing content
-                        if (mainElement === document.querySelector('main')) {
-                          // Keep the header in main element if it exists
-                          const header = mainElement.querySelector('h1, .text-xl, .text-2xl');
-                          const headerHTML = header ? header.parentElement.outerHTML : '<div class="py-4 px-4 border-b bg-white sticky top-0 z-10 shadow-sm"><h1 class="text-xl font-semibold text-gray-800">Your Chats</h1></div>';
-                          mainElement.innerHTML = headerHTML;
-                        }
-                        
-                        // Create new container
-                        container = document.createElement('div');
-                        container.id = 'chat-container';
-                        container.className = 'min-h-screen bg-white';
-                        mainElement.appendChild(container);
+                  // Mark the page as processed
+                  const processedMarker = document.createElement('div');
+                  processedMarker.id = 'listtra-chat-processed';
+                  processedMarker.style.display = 'none';
+                  document.body.appendChild(processedMarker);
+                  
+                  // Wait for page to finish initial loading
+                  document.body.style.opacity = '1'; // Changed from 0.6 to 1 to ensure visibility
+                  
+                  // Add a simple loading indicator that's guaranteed to be visible
+                  const loadingDiv = document.createElement('div');
+                  loadingDiv.id = 'debug-loading';
+                  loadingDiv.style.position = 'fixed';
+                  loadingDiv.style.top = '50%';
+                  loadingDiv.style.left = '50%';
+                  loadingDiv.style.transform = 'translate(-50%, -50%)';
+                  loadingDiv.style.backgroundColor = 'rgba(0,0,0,0.7)';
+                  loadingDiv.style.color = 'white';
+                  loadingDiv.style.padding = '20px';
+                  loadingDiv.style.borderRadius = '10px';
+                  loadingDiv.style.zIndex = '9999';
+                  loadingDiv.style.maxWidth = '80%';
+                  loadingDiv.style.textAlign = 'center';
+                  loadingDiv.innerHTML = 'Loading conversations... Please wait.';
+                  document.body.appendChild(loadingDiv);
+                
+                  // Helper function to ensure a container exists
+                  function ensureContainer() {
+                    let container = document.getElementById('chat-container');
+                    if (!container) {
+                      window.ReactNativeWebView.postMessage(JSON.stringify({
+                        type: 'LOG',
+                        message: 'Container not found, creating a new one'
+                      }));
+                      
+                      // Try to find main element or body as fallback
+                      const mainElement = document.querySelector('main') || document.body;
+                      
+                      // Clear existing content
+                      if (mainElement === document.querySelector('main')) {
+                        // Keep the header in main element if it exists
+                        const header = mainElement.querySelector('h1, .text-xl, .text-2xl');
+                        const headerHTML = header ? header.parentElement.outerHTML : '<div class="py-4 px-4 border-b bg-white sticky top-0 z-10 shadow-sm"><h1 class="text-xl font-semibold text-gray-800">Your Chats</h1></div>';
+                        mainElement.innerHTML = headerHTML;
                       }
-                      return container;
+                      
+                      // Create new container
+                      container = document.createElement('div');
+                      container.id = 'chat-container';
+                      container.className = 'min-h-screen bg-white';
+                      mainElement.appendChild(container);
                     }
-                  
-                    // Create our own UI instead of waiting for the page to load
-                    const mainElement = document.querySelector('main');
-                    if (mainElement) {
-                      // Keep the header but clear the content
-                      const header = mainElement.querySelector('h1, .text-xl, .text-2xl');
-                      const headerContainer = header?.parentElement;
-                      
-                      // Preserve the header if it exists
-                      const headerHTML = headerContainer ? headerContainer.outerHTML : '<div class="py-4 px-4 border-b bg-white sticky top-0 z-10 shadow-sm"><h1 class="text-xl font-semibold text-gray-800">Your Chats</h1></div>';
-                      
-                      // Replace the entire content
-                      mainElement.innerHTML = headerHTML + \`
-                        <div id="chat-container" class="min-h-screen bg-white">
-                          <div class="max-w-2xl mx-auto">
-                            <div id="loading-indicator" class="flex items-center justify-center py-20">
-                              <div class="text-center px-4">
-                                <div class="animate-spin rounded-full h-8 w-8 border-2 border-gray-100 border-t-gray-600 mx-auto mb-4"></div>
-                                <p class="text-gray-800 font-medium">Loading conversations...</p>
-                                <p class="text-sm text-gray-500 mt-2">Please wait while we prepare everything</p>
-                              </div>
+                    return container;
+                  }
+                
+                  // Create our own UI instead of waiting for the page to load
+                  const mainElement = document.querySelector('main');
+                  if (mainElement) {
+                    // Keep the header but clear the content
+                    const header = mainElement.querySelector('h1, .text-xl, .text-2xl');
+                    const headerContainer = header?.parentElement;
+                    
+                    // Preserve the header if it exists
+                    const headerHTML = headerContainer ? headerContainer.outerHTML : '<div class="py-4 px-4 border-b bg-white sticky top-0 z-10 shadow-sm"><h1 class="text-xl font-semibold text-gray-800">Your Chats</h1></div>';
+                    
+                    // Replace the entire content
+                    mainElement.innerHTML = headerHTML + \`
+                      <div id="chat-container" class="min-h-screen bg-white">
+                        <div class="max-w-2xl mx-auto">
+                          <div id="loading-indicator" class="flex items-center justify-center py-20">
+                            <div class="text-center px-4">
+                              <div class="animate-spin rounded-full h-8 w-8 border-2 border-gray-100 border-t-gray-600 mx-auto mb-4"></div>
+                              <p class="text-gray-800 font-medium">Loading conversations...</p>
+                              <p class="text-sm text-gray-500 mt-2">Please wait while we prepare everything</p>
                             </div>
                           </div>
                         </div>
-                      \`;
-                    }
-                    
-                    // Function to load conversations
-                    const loadConversations = async () => {
-                      try {
-                        updateDebug('Checking auth token...');
-                        
-                        // Wait for token to be available - try for up to 5 seconds
-                        let token = localStorage.getItem('token');
-                        let attempts = 0;
-                        const maxAttempts = 10; // 10 attempts with 500ms delay = 5 seconds max
-                        
-                        while (!token && attempts < maxAttempts) {
-                          updateDebug(\`Token not found, waiting... (\${attempts+1}/\${maxAttempts})\`);
-                          await new Promise(resolve => setTimeout(resolve, 500));
-                          token = localStorage.getItem('token');
-                          attempts++;
-                        }
-                        
-                        if (!token) {
-                          console.error('No auth token found after multiple attempts');
-                          window.ReactNativeWebView.postMessage(JSON.stringify({
-                            type: 'LOG',
-                            message: 'Auth token missing after retries',
-                            error: true
-                          }));
-                          document.body.style.opacity = '1';
-                          showErrorMessage('Authentication error. Please log in again.');
-                          return;
-                        }
-                        
-                        // Confirm token found
-                        updateDebug('Auth token found, proceeding with requests...');
+                      </div>
+                    \`;
+                  }
+                  
+                  // Function to load conversations
+                  const loadConversations = async () => {
+                    try {
+                      // Check if conversations are already loaded to prevent duplication
+                      if (document.getElementById('chat-container') && 
+                          document.getElementById('chat-container').children.length > 1 &&
+                          !document.getElementById('loading-indicator')) {
+                        console.log('Conversations already loaded, skipping to prevent duplication');
                         window.ReactNativeWebView.postMessage(JSON.stringify({
                           type: 'LOG',
-                          message: 'Auth token found',
-                          data: { tokenPresent: !!token }
+                          message: 'Conversations already loaded',
+                          data: { listingId: '${listingId}' }
                         }));
-                        
-                        updateDebug('Starting API requests...');
+                        return;
+                      }
+                      
+                      updateDebug('Checking auth token...');
+                      
+                      // Wait for token to be available - try for up to 5 seconds
+                      let token = localStorage.getItem('token');
+                      let attempts = 0;
+                      const maxAttempts = 10; // 10 attempts with 500ms delay = 5 seconds max
+                      
+                      while (!token && attempts < maxAttempts) {
+                        updateDebug(\`Token not found, waiting... (\${attempts+1}/\${maxAttempts})\`);
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                        token = localStorage.getItem('token');
+                        attempts++;
+                      }
+                      
+                      if (!token) {
+                        console.error('No auth token found after multiple attempts');
                         window.ReactNativeWebView.postMessage(JSON.stringify({
                           type: 'LOG',
-                          message: 'Starting API requests',
-                          data: { token: token ? 'present' : 'missing' }
+                          message: 'Auth token missing after retries',
+                          error: true
                         }));
-                        
-                        // Fetch listing details and all conversations in parallel
-                        const API_URL = 'https://backend.listtra.com';
-                        updateDebug('Fetching listing and conversations...');
+                        document.body.style.opacity = '1';
+                        showErrorMessage('Authentication error. Please log in again.');
+                        return;
+                      }
+                      
+                      // Confirm token found
+                      updateDebug('Auth token found, proceeding with requests...');
+                      window.ReactNativeWebView.postMessage(JSON.stringify({
+                        type: 'LOG',
+                        message: 'Auth token found',
+                        data: { tokenPresent: !!token }
+                      }));
+                      
+                      updateDebug('Starting API requests...');
+                      window.ReactNativeWebView.postMessage(JSON.stringify({
+                        type: 'LOG',
+                        message: 'Starting API requests',
+                        data: { token: token ? 'present' : 'missing' }
+                      }));
+                      
+                      // Fetch listing details and all conversations in parallel
+                      const API_URL = 'https://backend.listtra.com';
+                      updateDebug('Fetching listing and conversations...');
 
-                        try {
-                          // First get the listing details
-                          updateDebug('Fetching listing details...');
-                          const listingResponse = await fetch(\`\${API_URL}/api/listings/${listingId}/\`, {
-                            headers: {
-                              'Authorization': 'Bearer ' + token
-                            }
-                          });
-                          
-                          if (!listingResponse.ok) {
-                            throw new Error(\`Listing fetch failed: \${listingResponse.status}\`);
+                      try {
+                        // First get the listing details
+                        updateDebug('Fetching listing details...');
+                        const listingResponse = await fetch(\`\${API_URL}/api/listings/${listingId}/\`, {
+                          headers: {
+                            'Authorization': 'Bearer ' + token
                           }
-                          
-                          const listingData = await listingResponse.json();
-                          updateDebug('Listing details fetched successfully');
+                        });
+                        
+                        if (!listingResponse.ok) {
+                          throw new Error(\`Listing fetch failed: \${listingResponse.status}\`);
+                        }
+                        
+                        const listingData = await listingResponse.json();
+                        updateDebug('Listing details fetched successfully');
+                        window.ReactNativeWebView.postMessage(JSON.stringify({
+                          type: 'LOG',
+                          message: 'Listing details retrieved',
+                          data: { 
+                            title: listingData.title,
+                            seller_id: listingData.seller_id
+                          }
+                        }));
+                        
+                        // Then get all conversations
+                        updateDebug('Fetching conversations...');
+                        const conversationsResponse = await fetch(\`\${API_URL}/api/chat/conversations/\`, {
+                          headers: {
+                            'Authorization': 'Bearer ' + token
+                          }
+                        });
+                        
+                        if (!conversationsResponse.ok) {
+                          throw new Error(\`Conversations fetch failed: \${conversationsResponse.status}\`);
+                        }
+                        
+                        const allConversations = await conversationsResponse.json();
+                        updateDebug(\`Found \${allConversations.length} total conversations\`);
+                        window.ReactNativeWebView.postMessage(JSON.stringify({
+                          type: 'LOG',
+                          message: 'All conversations retrieved',
+                          data: { count: allConversations.length }
+                        }));
+                        
+                        // Filter conversations for this listing
+                        updateDebug('Filtering conversations for this listing...');
+                        const listingIdStr = '${listingId}';
+                        
+                        // First check the structure of a conversation to understand what we're filtering
+                        if (allConversations.length > 0) {
+                          const sampleConv = allConversations[0];
                           window.ReactNativeWebView.postMessage(JSON.stringify({
                             type: 'LOG',
-                            message: 'Listing details retrieved',
+                            message: 'Sample conversation structure',
                             data: { 
-                              title: listingData.title,
-                              seller_id: listingData.seller_id
+                              hasListing: !!sampleConv.listing,
+                              listingProps: sampleConv.listing ? Object.keys(sampleConv.listing) : [],
+                              sampleProductId: sampleConv.listing?.product_id
                             }
                           }));
+                        }
+                        
+                        // Filter using different approaches to ensure we match correctly
+                        const conversations = allConversations.filter(conv => {
+                          if (!conv.listing) return false;
                           
-                          // Then get all conversations
-                          updateDebug('Fetching conversations...');
-                          const conversationsResponse = await fetch(\`\${API_URL}/api/chat/conversations/\`, {
-                            headers: {
-                              'Authorization': 'Bearer ' + token
-                            }
-                          });
+                          // Try different comparison approaches
+                          const directMatch = conv.listing.product_id === listingIdStr;
+                          const looseMatch = String(conv.listing.product_id) === String(listingIdStr);
                           
-                          if (!conversationsResponse.ok) {
-                            throw new Error(\`Conversations fetch failed: \${conversationsResponse.status}\`);
-                          }
-                          
-                          const allConversations = await conversationsResponse.json();
-                          updateDebug(\`Found \${allConversations.length} total conversations\`);
-                          window.ReactNativeWebView.postMessage(JSON.stringify({
-                            type: 'LOG',
-                            message: 'All conversations retrieved',
-                            data: { count: allConversations.length }
-                          }));
-                          
-                          // Filter conversations for this listing
-                          updateDebug('Filtering conversations for this listing...');
-                          const listingIdStr = '${listingId}';
-                          
-                          // First check the structure of a conversation to understand what we're filtering
-                          if (allConversations.length > 0) {
-                            const sampleConv = allConversations[0];
+                          // Log each potential match for debugging
+                          if (directMatch || looseMatch) {
                             window.ReactNativeWebView.postMessage(JSON.stringify({
                               type: 'LOG',
-                              message: 'Sample conversation structure',
+                              message: 'Potential conversation match',
                               data: { 
-                                hasListing: !!sampleConv.listing,
-                                listingProps: sampleConv.listing ? Object.keys(sampleConv.listing) : [],
-                                sampleProductId: sampleConv.listing?.product_id
+                                convId: conv.id,
+                                listingId: conv.listing.product_id, 
+                                targetId: listingIdStr,
+                                directMatch,
+                                looseMatch
                               }
                             }));
                           }
                           
-                          // Filter using different approaches to ensure we match correctly
-                          const conversations = allConversations.filter(conv => {
-                            if (!conv.listing) return false;
-                            
-                            // Try different comparison approaches
-                            const directMatch = conv.listing.product_id === listingIdStr;
-                            const looseMatch = String(conv.listing.product_id) === String(listingIdStr);
-                            
-                            // Log each potential match for debugging
-                            if (directMatch || looseMatch) {
-                              window.ReactNativeWebView.postMessage(JSON.stringify({
-                                type: 'LOG',
-                                message: 'Potential conversation match',
-                                data: { 
-                                  convId: conv.id,
-                                  listingId: conv.listing.product_id, 
-                                  targetId: listingIdStr,
-                                  directMatch,
-                                  looseMatch
-                                }
-                              }));
-                            }
-                            
-                            return looseMatch; // Use loose comparison to be safe
-                          });
-                          
-                          updateDebug(\`Found \${conversations.length} conversations for this listing\`);
-                          window.ReactNativeWebView.postMessage(JSON.stringify({
-                            type: 'LOG',
-                            message: 'Filtered conversations',
-                            data: { 
-                              filtered: conversations.length, 
-                              total: allConversations.length,
-                              listingId: listingIdStr
-                            }
-                          }));
-                          
-                          // Make sure we have a valid container before proceeding
-                          const container = ensureContainer();
-                          
-                          // Remove any existing loading indicator
-                          const loadingIndicator = document.getElementById('loading-indicator');
-                          if (loadingIndicator) {
-                            loadingIndicator.remove();
-                          }
-                          
-                          // Display listing info
-                          if (listingData && container) {
-                            updateDebug('Rendering listing info...');
-                            const listingInfoEl = document.createElement('div');
-                            listingInfoEl.className = 'py-4 px-4 border-b bg-white';
-                            
-                            // Get the first image URL or placeholder
-                            const imageUrl = listingData.images && listingData.images.length > 0 
-                              ? listingData.images[0].image_url || '/placeholder-image.jpg'
-                              : '/placeholder-image.jpg';
-                              
-                            listingInfoEl.innerHTML = \`
-                              <div class="flex items-center gap-4">
-                                <div class="w-16 h-16 rounded-md overflow-hidden bg-gray-100">
-                                  <img src="\${imageUrl}" alt="\${listingData.title}" class="w-full h-full object-cover" />
-                                </div>
-                                <div>
-                                  <h1 class="text-sm font-medium text-gray-900">\${listingData.title}</h1>
-                                  <p class="text-xs text-gray-500">A$\${listingData.price}</p>
-                                </div>
-                              </div>
-                            \`;
-                            
-                            container.appendChild(listingInfoEl);
-                          }
-                          
-                          // Format timestamp for last message
-                          const formatTimestamp = (date) => {
-                            const now = new Date();
-                            const messageDate = new Date(date);
-                            const diffInMinutes = Math.floor((now - messageDate) / (1000 * 60));
-                            const diffInHours = Math.floor(diffInMinutes / 60);
-                            const diffInDays = Math.floor(diffInHours / 24);
-
-                            if (diffInMinutes < 1) return "Just now";
-                            if (diffInMinutes < 60) return \`\${diffInMinutes}m ago\`;
-                            if (diffInHours < 24) return \`\${diffInHours}h ago\`;
-                            if (diffInDays < 7) return \`\${diffInDays}d ago\`;
-                            return messageDate.toLocaleDateString();
-                          };
-
-                          // Get last message/offer/review text
-                          const getLastActivityText = (conversation) => {
-                            if (!conversation.last_message) return "No messages yet";
-
-                            if (conversation.last_message.is_offer) {
-                              const offer = conversation.last_message.offer;
-                              if (offer.status === "Pending") {
-                                return \`Offer: A$\${offer.price}\`;
-                              } else if (offer.status === "Accepted") {
-                                return \`Offer accepted: A$\${offer.price}\`;
-                              } else if (offer.status === "Rejected") {
-                                return \`Offer rejected: A$\${offer.price}\`;
-                              }
-                            } else if (conversation.last_message.review_data) {
-                              const review = conversation.last_message.review_data;
-                              return \`\${review.reviewer_username} left a \${review.rating}-star review\`;
-                            } else {
-                              return conversation.last_message.content;
-                            }
-                          };
-                          
-                          // Create container for chat list
-                          updateDebug('Rendering conversation list...');
-                          const chatListContainer = document.createElement('div');
-                          chatListContainer.className = 'divide-y';
-                          
-                          // Display conversations
-                          if (conversations.length === 0) {
-                            updateDebug('No conversations found');
-                            chatListContainer.innerHTML = \`
-                              <div class="text-center py-8">
-                                <p class="text-gray-500">No conversations found</p>
-                              </div>
-                            \`;
-                          } else {
-                            updateDebug(\`Rendering \${conversations.length} conversations...\`);
-                            // Sort conversations by most recent first
-                            conversations.sort((a, b) => {
-                              if (!a.last_message && !b.last_message) return 0;
-                              if (!a.last_message) return 1;
-                              if (!b.last_message) return -1;
-                              return new Date(b.last_message.created_at) - new Date(a.last_message.created_at);
-                            });
-                            
-                            conversations.forEach(conversation => {
-                              const chatItem = document.createElement('a');
-                              chatItem.href = \`/chat/\${conversation.id}\`;
-                              chatItem.className = 'block hover:bg-gray-50 transition-colors';
-                              
-                              // Determine the other participant
-                              const otherParticipant = conversation.other_participant || {};
-                              const initialLetter = (otherParticipant.nickname || 'Unknown').charAt(0).toUpperCase();
-                              
-                              let lastMessageText = getLastActivityText(conversation);
-                              if (lastMessageText.length > 40) {
-                                lastMessageText = lastMessageText.substring(0, 40) + '...';
-                              }
-                              
-                              chatItem.innerHTML = \`
-                                <div class="p-4">
-                                  <div class="flex items-center space-x-3">
-                                    <div class="flex-shrink-0">
-                                      <div class="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center">
-                                        <span class="text-gray-500">\${initialLetter}</span>
-                                      </div>
-                                    </div>
-                                    <div class="flex-1 min-w-0">
-                                      <div class="flex items-center justify-between">
-                                        <p class="text-sm font-medium text-gray-900 truncate">
-                                          \${otherParticipant.nickname || "Unknown User"}
-                                        </p>
-                                        \${conversation.last_message ? \`
-                                          <span class="text-xs text-gray-500">
-                                            \${formatTimestamp(conversation.last_message.created_at)}
-                                          </span>
-                                        \` : ''}
-                                      </div>
-                                      <p class="text-sm text-gray-500 truncate">
-                                        \${lastMessageText}
-                                      </p>
-                                    </div>
-                                    <div class="flex-shrink-0">
-                                      <svg
-                                        xmlns="http://www.w3.org/2000/svg"
-                                        class="h-5 w-5 text-gray-400"
-                                        viewBox="0 0 20 20"
-                                        fill="currentColor"
-                                      >
-                                        <path
-                                          fill-rule="evenodd"
-                                          d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"
-                                          clip-rule="evenodd"
-                                        />
-                                      </svg>
-                                    </div>
-                                  </div>
-                                </div>
-                              \`;
-                              
-                              chatListContainer.appendChild(chatItem);
-                            });
-                          }
-                          
-                          container.appendChild(chatListContainer);
-                          updateDebug('Finished rendering!');
-                          document.body.style.opacity = '1';
-                          
-                          // Clean up debug overlay after everything is done
-                          const debugEl = document.getElementById('debug-loading');
-                          if (debugEl) {
-                            setTimeout(() => {
-                              debugEl.remove();
-                            }, 1000);
-                          }
-                          
-                        } catch (apiError) {
-                          window.ReactNativeWebView.postMessage(JSON.stringify({
-                            type: 'LOG',
-                            message: 'API error',
-                            error: apiError.toString()
-                          }));
-                          updateDebug('Error: ' + apiError.toString());
-                          throw apiError;
-                        }
+                          return looseMatch; // Use loose comparison to be safe
+                        });
                         
-                      } catch (error) {
-                        console.error('Error loading conversations:', error);
+                        updateDebug(\`Found \${conversations.length} conversations for this listing\`);
                         window.ReactNativeWebView.postMessage(JSON.stringify({
                           type: 'LOG',
-                          message: 'Error in loadConversations',
-                          error: error.toString()
+                          message: 'Filtered conversations',
+                          data: { 
+                            filtered: conversations.length, 
+                            total: allConversations.length,
+                            listingId: listingIdStr
+                          }
                         }));
+                        
+                        // Make sure we have a valid container before proceeding
+                        const container = ensureContainer();
+                        
+                        // Remove any existing loading indicator
+                        const loadingIndicator = document.getElementById('loading-indicator');
+                        if (loadingIndicator) {
+                          loadingIndicator.remove();
+                        }
+                        
+                        // Display listing info
+                        if (listingData && container) {
+                          updateDebug('Rendering listing info...');
+                          const listingInfoEl = document.createElement('div');
+                          listingInfoEl.className = 'py-4 px-4 border-b bg-white';
+                          
+                          // Get the first image URL or placeholder
+                          const imageUrl = listingData.images && listingData.images.length > 0 
+                            ? listingData.images[0].image_url || '/placeholder-image.jpg'
+                            : '/placeholder-image.jpg';
+                            
+                          listingInfoEl.innerHTML = \`
+                            <div class="flex items-center gap-4">
+                              <div class="w-16 h-16 rounded-md overflow-hidden bg-gray-100">
+                                <img src="\${imageUrl}" alt="\${listingData.title}" class="w-full h-full object-cover" />
+                              </div>
+                              <div>
+                                <h1 class="text-sm font-medium text-gray-900">\${listingData.title}</h1>
+                                <p class="text-xs text-gray-500">A$\${listingData.price}</p>
+                              </div>
+                            </div>
+                          \`;
+                          
+                          container.appendChild(listingInfoEl);
+                        }
+                        
+                        // Format timestamp for last message
+                        const formatTimestamp = (date) => {
+                          const now = new Date();
+                          const messageDate = new Date(date);
+                          const diffInMinutes = Math.floor((now - messageDate) / (1000 * 60));
+                          const diffInHours = Math.floor(diffInMinutes / 60);
+                          const diffInDays = Math.floor(diffInHours / 24);
+
+                          if (diffInMinutes < 1) return "Just now";
+                          if (diffInMinutes < 60) return \`\${diffInMinutes}m ago\`;
+                          if (diffInHours < 24) return \`\${diffInHours}h ago\`;
+                          if (diffInDays < 7) return \`\${diffInDays}d ago\`;
+                          return messageDate.toLocaleDateString();
+                        };
+
+                        // Get last message/offer/review text
+                        const getLastActivityText = (conversation) => {
+                          if (!conversation.last_message) return "No messages yet";
+
+                          if (conversation.last_message.is_offer) {
+                            const offer = conversation.last_message.offer;
+                            if (offer.status === "Pending") {
+                              return \`Offer: A$\${offer.price}\`;
+                            } else if (offer.status === "Accepted") {
+                              return \`Offer accepted: A$\${offer.price}\`;
+                            } else if (offer.status === "Rejected") {
+                              return \`Offer rejected: A$\${offer.price}\`;
+                            }
+                          } else if (conversation.last_message.review_data) {
+                            const review = conversation.last_message.review_data;
+                            return \`\${review.reviewer_username} left a \${review.rating}-star review\`;
+                          } else {
+                            return conversation.last_message.content;
+                          }
+                        };
+                        
+                        // Create container for chat list
+                        updateDebug('Rendering conversation list...');
+                        const chatListContainer = document.createElement('div');
+                        chatListContainer.className = 'divide-y';
+                        
+                        // Display conversations
+                        if (conversations.length === 0) {
+                          updateDebug('No conversations found');
+                          chatListContainer.innerHTML = \`
+                            <div class="text-center py-8">
+                              <p class="text-gray-500">No conversations found</p>
+                            </div>
+                          \`;
+                        } else {
+                          updateDebug(\`Rendering \${conversations.length} conversations...\`);
+                          // Sort conversations by most recent first
+                          conversations.sort((a, b) => {
+                            if (!a.last_message && !b.last_message) return 0;
+                            if (!a.last_message) return 1;
+                            if (!b.last_message) return -1;
+                            return new Date(b.last_message.created_at) - new Date(a.last_message.created_at);
+                          });
+                          
+                          conversations.forEach(conversation => {
+                            const chatItem = document.createElement('a');
+                            chatItem.href = \`/chat/\${conversation.id}\`;
+                            chatItem.className = 'block hover:bg-gray-50 transition-colors';
+                            
+                            // Determine the other participant
+                            const otherParticipant = conversation.other_participant || {};
+                            const initialLetter = (otherParticipant.nickname || 'Unknown').charAt(0).toUpperCase();
+                            
+                            let lastMessageText = getLastActivityText(conversation);
+                            if (lastMessageText.length > 40) {
+                              lastMessageText = lastMessageText.substring(0, 40) + '...';
+                            }
+                            
+                            chatItem.innerHTML = \`
+                              <div class="p-4">
+                                <div class="flex items-center space-x-3">
+                                  <div class="flex-shrink-0">
+                                    <div class="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center">
+                                      <span class="text-gray-500">\${initialLetter}</span>
+                                    </div>
+                                  </div>
+                                  <div class="flex-1 min-w-0">
+                                    <div class="flex items-center justify-between">
+                                      <p class="text-sm font-medium text-gray-900 truncate">
+                                        \${otherParticipant.nickname || "Unknown User"}
+                                      </p>
+                                      \${conversation.last_message ? \`
+                                        <span class="text-xs text-gray-500">
+                                          \${formatTimestamp(conversation.last_message.created_at)}
+                                        </span>
+                                      \` : ''}
+                                    </div>
+                                    <p class="text-sm text-gray-500 truncate">
+                                      \${lastMessageText}
+                                    </p>
+                                  </div>
+                                  <div class="flex-shrink-0">
+                                    <svg
+                                      xmlns="http://www.w3.org/2000/svg"
+                                      class="h-5 w-5 text-gray-400"
+                                      viewBox="0 0 20 20"
+                                      fill="currentColor"
+                                    >
+                                      <path
+                                        fill-rule="evenodd"
+                                        d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"
+                                        clip-rule="evenodd"
+                                      />
+                                    </svg>
+                                  </div>
+                                </div>
+                              </div>
+                            \`;
+                            
+                            chatListContainer.appendChild(chatItem);
+                          });
+                        }
+                        
+                        container.appendChild(chatListContainer);
+                        updateDebug('Finished rendering!');
+                        
+                        // Make sure all loading indicators are removed
                         document.body.style.opacity = '1';
-                        updateDebug('Failed: ' + error.toString());
-                        showErrorMessage('Failed to load conversations. ' + error.toString());
+                        
+                        // Remove any additional loading overlays
+                        const loadingElements = document.querySelectorAll('.loading, .initializing, #loading-indicator, #debug-loading, [id*="loading"]');
+                        loadingElements.forEach(el => el.remove());
+                        
+                        // Force display of the container
+                        if (container) {
+                          container.style.display = 'block';
+                          container.style.visibility = 'visible';
+                          container.style.opacity = '1';
+                        }
+                        
+                        // Clean up debug overlay after everything is done
+                        const debugEl = document.getElementById('debug-loading');
+                        if (debugEl) {
+                          debugEl.remove();
+                        }
+                        
+                        // Add an additional check to clean up any remaining loading indicators
+                        setTimeout(() => {
+                          document.querySelectorAll('.loading, .initializing, #loading-indicator, #debug-loading, [id*="loading"]').forEach(el => el.remove());
+                          
+                          // Clean up fixed position elements
+                          document.querySelectorAll('div[style*="position: fixed"]').forEach(el => {
+                            if (el.innerText && el.innerText.toLowerCase().includes('loading')) {
+                              el.remove();
+                            }
+                          });
+                          
+                          document.body.style.opacity = '1';
+                        }, 1000);
+                        
+                      } catch (apiError) {
+                        window.ReactNativeWebView.postMessage(JSON.stringify({
+                          type: 'LOG',
+                          message: 'API error',
+                          error: apiError.toString()
+                        }));
+                        updateDebug('Error: ' + apiError.toString());
+                        throw apiError;
                       }
-                    };
-                    
-                    // Helper function to update debug overlay
-                    function updateDebug(message) {
-                      console.log('Debug:', message);
+                      
+                    } catch (error) {
+                      console.error('Error loading conversations:', error);
                       window.ReactNativeWebView.postMessage(JSON.stringify({
                         type: 'LOG',
-                        message: 'Debug',
-                        data: message
+                        message: 'Error in loadConversations',
+                        error: error.toString()
                       }));
-                      
-                      const debugEl = document.getElementById('debug-loading');
-                      if (debugEl) {
-                        debugEl.innerHTML = message;
-                      }
+                      document.body.style.opacity = '1';
+                      updateDebug('Failed: ' + error.toString());
+                      showErrorMessage('Failed to load conversations. ' + error.toString());
+                    }
+                  };
+                  
+                  // Helper function to update debug overlay
+                  function updateDebug(message) {
+                    console.log('Debug:', message);
+                    window.ReactNativeWebView.postMessage(JSON.stringify({
+                      type: 'LOG',
+                      message: 'Debug',
+                      data: message
+                    }));
+                    
+                    const debugEl = document.getElementById('debug-loading');
+                    if (debugEl) {
+                      debugEl.innerHTML = message;
+                    }
+                  }
+                  
+                  // Helper function to show error message
+                  const showErrorMessage = (message) => {
+                    // Make sure we have a container
+                    const container = ensureContainer();
+                    
+                    // Remove any existing loading indicator
+                    const loadingIndicator = document.getElementById('loading-indicator');
+                    if (loadingIndicator) {
+                      loadingIndicator.remove();
                     }
                     
-                    // Helper function to show error message
-                    const showErrorMessage = (message) => {
-                      // Make sure we have a container
-                      const container = ensureContainer();
-                      
-                      // Remove any existing loading indicator
-                      const loadingIndicator = document.getElementById('loading-indicator');
-                      if (loadingIndicator) {
-                        loadingIndicator.remove();
-                      }
-                      
-                      const errorEl = document.createElement('div');
-                      errorEl.className = 'flex flex-col items-center justify-center p-8 text-center';
-                      errorEl.innerHTML = \`
-                        <div class="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mb-4">
-                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-8 h-8 text-red-500">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
-                          </svg>
-                        </div>
-                        <p class="text-red-600 mb-2">\${message}</p>
-                        <button class="mt-4 px-4 py-2 bg-primary text-white rounded-full text-sm" onclick="window.location.reload()">
-                          Try Again
-                        </button>
-                      \`;
-                      container.appendChild(errorEl);
-                    };
+                    const errorEl = document.createElement('div');
+                    errorEl.className = 'flex flex-col items-center justify-center p-8 text-center';
+                    errorEl.innerHTML = \`
+                      <div class="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mb-4">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-8 h-8 text-red-500">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                        </svg>
+                      </div>
+                      <p class="text-red-600 mb-2">\${message}</p>
+                      <button class="mt-4 px-4 py-2 bg-primary text-white rounded-full text-sm" onclick="window.location.reload()">
+                        Try Again
+                      </button>
+                    \`;
+                    container.appendChild(errorEl);
                     
-                    // Wait a moment for any ongoing page loads, then run our function
-                    updateDebug('Starting conversation load...');
-                    setTimeout(loadConversations, 500);
-                  }
+                    // Force any remaining loading elements to be removed
+                    document.querySelectorAll('.loading, .initializing, #loading-indicator, #debug-loading, [id*="loading"]').forEach(el => el.remove());
+                    document.body.style.opacity = '1';
+                  };
+                  
+                  // Additional code to handle potential root-level loading indicators
+                  const clearRootLoaders = () => {
+                    // Find any root-level loading elements
+                    const rootLoaders = Array.from(document.body.children).filter(el => {
+                      const text = el.innerText && el.innerText.toLowerCase();
+                      return text && (text.includes('loading') || text.includes('initializing') || text.includes('please wait'));
+                    });
+                    
+                    // Remove them
+                    rootLoaders.forEach(el => el.remove());
+                  };
+                  
+                  // Run loader cleanup
+                  clearRootLoaders();
+                  
+                  // Wait a moment for any ongoing page loads, then run our function
+                  updateDebug('Starting conversation load...');
+                  setTimeout(loadConversations, 500);
+                  
+                  // Add safety timeout to clear loaders if something goes wrong
+                  setTimeout(() => {
+                    document.body.style.opacity = '1';
+                    document.querySelectorAll('.loading, .initializing, #loading-indicator, #debug-loading, [id*="loading"]').forEach(el => el.remove());
+                    clearRootLoaders();
+                  }, 10000);
                 } catch (e) {
                   console.error('Error in chat page script:', e);
                   window.ReactNativeWebView.postMessage(JSON.stringify({
@@ -763,9 +841,16 @@ const WebViewScreen: React.FC<WebViewScreenProps> = ({
                                           document.querySelector('.flex.flex-col');
                           
                           if (container) {
+                            // Check if we've already added controls to prevent duplication
+                            if (container.querySelector('[data-owner-controls="true"]')) {
+                              console.log('Owner controls already added, skipping');
+                              return true;
+                            }
+                            
                             // Create controls div
                             const controls = document.createElement('div');
                             controls.className = 'flex flex-col gap-4 mt-4';
+                            controls.setAttribute('data-owner-controls', 'true');
                             
                             // View all chats button
                             const chatsBtn = document.createElement('button');
