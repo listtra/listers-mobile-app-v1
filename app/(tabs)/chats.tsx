@@ -8,11 +8,14 @@ export default function ChatsScreen() {
   const { isInitializing } = useAuth();
   const params = useLocalSearchParams();
   const chatId = params.id;
+  const webUrl = params.webUrl as string;
   
-  // Set the correct URI based on whether we're viewing a specific chat
-  const uri = chatId 
-    ? `https://listtra.com/chat/${chatId}` 
-    : "https://listtra.com/chats";
+  // Set the correct URI based on params
+  const uri = webUrl 
+    ? webUrl
+    : chatId 
+      ? `https://listtra.com/chat/${chatId}` 
+      : "https://listtra.com/chat";
   
   // Wait for auth initialization before loading WebView
   if (isInitializing) {
