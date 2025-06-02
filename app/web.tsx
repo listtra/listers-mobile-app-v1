@@ -1,18 +1,13 @@
 import { useLocalSearchParams } from 'expo-router';
 import React from 'react';
 import { StyleSheet, View } from 'react-native';
-import WebViewScreen from '../../components/WebViewScreen';
-import { useAuth } from '../../context/AuthContext';
+import WebViewScreen from '../components/WebViewScreen';
+import { useAuth } from '../context/AuthContext';
 
-export default function ChatsScreen() {
+export default function WebScreen() {
   const { isInitializing } = useAuth();
   const params = useLocalSearchParams();
-  const chatId = params.id;
-  
-  // Set the correct URI based on whether we're viewing a specific chat
-  const uri = chatId 
-    ? `https://listtra.com/chat/${chatId}` 
-    : "https://listtra.com/chats";
+  const uri = params.uri as string;
   
   // Wait for auth initialization before loading WebView
   if (isInitializing) {

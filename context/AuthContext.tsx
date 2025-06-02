@@ -330,14 +330,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setError(null);
 
     try {
+      console.log('Attempting registration with data:', userData);
       // Register user
-      await axios.post(`${API_URL}/api/register/`, userData);
+      const registerResponse = await axios.post(`${API_URL}/api/register/`, userData);
+      console.log('Registration response:', registerResponse.data);
       
       // After registration, log the user in
       await login(userData.email, userData.password);
     } catch (error: any) {
       console.error('Registration error:', error);
-      setError(error.response?.data?.detail || 'Registration failed. Please try again.');
+      if (error.response) {
+        console.error('Error status:', error.response.status);
+        console.error('Error data:', error.response.data);
+        
+        // Handle validation errors more specifically
+        if (error.response.data) {
+          const errorMessages = [];
+          for (const field in error.response.data) {
+            errorMessages.push(`${field}: ${error.response.data[field]}`);
+          }
+          if (errorMessages.length > 0) {
+            setError(errorMessages.join(', '));
+          } else {
+            setError(error.response.data.detail || 'Registration failed. Please try again.');
+          }
+        }
+      } else {
+        setError('Registration failed. Please try again.');
+      }
     } finally {
       setIsLoading(false);
     }

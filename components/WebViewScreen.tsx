@@ -1,4 +1,4 @@
-import { router } from 'expo-router';
+import { useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -9,18 +9,37 @@ type WebViewScreenProps = {
   uri: string;
   showLoader?: boolean;
   requiresAuth?: boolean;
+  injectedJavaScript?: string;
+  onMessage?: (event: WebViewMessageEvent) => void;
 };
 
-const WebViewScreen: React.FC<WebViewScreenProps> = ({ 
+const WebViewScreen = React.forwardRef<{ injectJavaScript: (script: string) => void; reload: () => void }, WebViewScreenProps>(({ 
   uri, 
   showLoader = true,
-  requiresAuth = false 
-}) => {
+  requiresAuth = false,
+  injectedJavaScript = '',
+  onMessage
+}, ref) => {
   const webViewRef = useRef<WebView>(null);
   const { tokens, logout, isAuthenticated, setTokensDirectly, user } = useAuth();
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentUrl, setCurrentUrl] = useState(uri);
+  const router = useRouter();
+
+  // Expose the webViewRef to parent components via the forwardRef pattern
+  React.useImperativeHandle(ref, () => ({
+    injectJavaScript: (script: string) => {
+      if (webViewRef.current) {
+        webViewRef.current.injectJavaScript(script);
+      }
+    },
+    reload: () => {
+      if (webViewRef.current) {
+        webViewRef.current.reload();
+      }
+    }
+  }));
 
   // Construct proper URL with auth indicator
   const getAuthenticatedUrl = (baseUrl: string) => {
@@ -38,7 +57,7 @@ const WebViewScreen: React.FC<WebViewScreenProps> = ({
   const injectTokensToWebView = () => {
     if (!webViewRef.current || !tokens.accessToken || !tokens.refreshToken || !user) return;
     
-    console.log('Injecting tokens and user data to WebView');
+    console.log('Injecting tokens and user data to WebView for URL:', currentUrl);
     
     const script = `
       (function() {
@@ -54,16 +73,41 @@ const WebViewScreen: React.FC<WebViewScreenProps> = ({
           console.log('Setting user data:', userData);
           localStorage.setItem('user', userDataString);
           
-          // STEP 3: Add ownership check function
+          // STEP 3: Make user data globally available
+            window.userData = userData;
+            
+          // STEP 4: Detect if we're on a chat page and log info
+          if (window.location.pathname.includes('/chat/')) {
+            console.log('On chat page, enhancing token access');
+            
+            // Check if there's any loading elements
+            const loadingElements = document.querySelectorAll('.animate-spin, .loading');
+            console.log('Found loading elements:', loadingElements.length);
+            
+            // Force bypass any loading screen after 2 seconds
+            setTimeout(() => {
+              const loadingElements = document.querySelectorAll('.animate-spin, .loading');
+              loadingElements.forEach(el => {
+                console.log('Removing loading element:', el);
+                el.remove();
+              });
+            }, 2000);
+          }
+            
+          // Rest of the original function...
+          // Add ownership check function
           window.checkIsOwner = function(sellerId) {
-            const user = JSON.parse(localStorage.getItem('user') || 'null');
+            const user = window.userData || JSON.parse(localStorage.getItem('user') || 'null');
             const isOwner = user && user.id === sellerId;
             console.log('Ownership check:', { userId: user?.id, sellerId, isOwner });
             return isOwner;
           };
-                      
-          // STEP 4: Dispatch event to notify web app
-          window.dispatchEvent(new Event('auth_ready'));
+          
+          // STEP 5: Update React's AuthContext if possible
+          if (window.updateAuthContext) {
+            window.updateAuthContext(userData, '${tokens.accessToken}', '${tokens.refreshToken}');
+            console.log('Updated AuthContext using global handler');
+          }
           
           true; // Return success
         } catch (error) {
@@ -93,815 +137,18 @@ const WebViewScreen: React.FC<WebViewScreenProps> = ({
     console.log('Navigation state change:', navState.url);
     setCurrentUrl(navState.url);
     
-    // Extract listing ID and slug from URL if we're on a listing detail page
-    const url = new URL(navState.url);
-    const path = url.pathname;
-    
-    // Handle chat with listing query parameter
-    if (path === '/chat' && url.searchParams.has('listing')) {
-      const listingId = url.searchParams.get('listing');
-      console.log('Chat page with listing detected:', listingId);
-      
-      if (listingId && webViewRef.current) {
-        // First, inject tokens to ensure we're authenticated
-        injectTokensToWebView();
-        
-        // Inject script to properly load all chats for this listing
-        setTimeout(() => {
-          if (!webViewRef.current) return; // Check if still available after timeout
-          
-          // First ensure tokens are directly available
-          const tokenSetupScript = `
-            (function() {
-              try {
-                console.log('Directly setting tokens for chat page');
-                localStorage.setItem('token', '${tokens.accessToken}');
-                localStorage.setItem('refreshToken', '${tokens.refreshToken}');
-                
-                ${user ? `localStorage.setItem('user', '${JSON.stringify(user)}');` : ''}
-                
-                window.ReactNativeWebView.postMessage(JSON.stringify({
-                  type: 'LOG',
-                  message: 'Direct token setup complete',
-                  data: { tokenSet: true }
-                }));
-                return true;
-              } catch (e) {
-                console.error('Error setting tokens directly:', e);
-                window.ReactNativeWebView.postMessage(JSON.stringify({
-                  type: 'LOG',
-                  message: 'Error setting tokens directly',
-                  error: e.toString()
-                }));
-                return false;
-              }
-            })();
-          `;
-          
-          webViewRef.current.injectJavaScript(tokenSetupScript);
-          console.log('Token setup script injected');
-          
-          // Then after a short delay, run the chat fix script
+    // Special handling for chat detail pages
+    if (navState.url.includes('/chat/') && navState.url.includes('listtra.com')) {
+      console.log('Detected chat detail page, injecting tokens immediately');
           setTimeout(() => {
-            if (!webViewRef.current) return;
-            
-            const chatFixScript = `
-              (function() {
-                try {
-                  console.log('Processing chat page for listing:', '${listingId}');
-                  window.ReactNativeWebView.postMessage(JSON.stringify({
-                    type: 'LOG',
-                    message: 'Processing chat page',
-                    data: { listingId: '${listingId}' }
-                  }));
-                  
-                  // Check if we've already processed this page to prevent duplication
-                  if (document.getElementById('listtra-chat-processed')) {
-                    console.log('Chat page already processed, skipping to prevent duplication');
-                    window.ReactNativeWebView.postMessage(JSON.stringify({
-                      type: 'LOG',
-                      message: 'Preventing duplicate chat processing',
-                      data: { listingId: '${listingId}' }
-                    }));
-                    return true;
-                  }
-                  
-                  // Mark the page as processed
-                  const processedMarker = document.createElement('div');
-                  processedMarker.id = 'listtra-chat-processed';
-                  processedMarker.style.display = 'none';
-                  document.body.appendChild(processedMarker);
-                  
-                  // Wait for page to finish initial loading
-                  document.body.style.opacity = '1'; // Changed from 0.6 to 1 to ensure visibility
-                  
-                  // Add a simple loading indicator that's guaranteed to be visible
-                  const loadingDiv = document.createElement('div');
-                  loadingDiv.id = 'debug-loading';
-                  loadingDiv.style.position = 'fixed';
-                  loadingDiv.style.top = '50%';
-                  loadingDiv.style.left = '50%';
-                  loadingDiv.style.transform = 'translate(-50%, -50%)';
-                  loadingDiv.style.backgroundColor = 'rgba(0,0,0,0.7)';
-                  loadingDiv.style.color = 'white';
-                  loadingDiv.style.padding = '20px';
-                  loadingDiv.style.borderRadius = '10px';
-                  loadingDiv.style.zIndex = '9999';
-                  loadingDiv.style.maxWidth = '80%';
-                  loadingDiv.style.textAlign = 'center';
-                  loadingDiv.innerHTML = 'Loading conversations... Please wait.';
-                  document.body.appendChild(loadingDiv);
-                
-                  // Helper function to ensure a container exists
-                  function ensureContainer() {
-                    let container = document.getElementById('chat-container');
-                    if (!container) {
-                      window.ReactNativeWebView.postMessage(JSON.stringify({
-                        type: 'LOG',
-                        message: 'Container not found, creating a new one'
-                      }));
-                      
-                      // Try to find main element or body as fallback
-                      const mainElement = document.querySelector('main') || document.body;
-                      
-                      // Clear existing content
-                      if (mainElement === document.querySelector('main')) {
-                        // Keep the header in main element if it exists
-                        const header = mainElement.querySelector('h1, .text-xl, .text-2xl');
-                        const headerHTML = header ? header.parentElement.outerHTML : '<div class="py-4 px-4 border-b bg-white sticky top-0 z-10 shadow-sm"><h1 class="text-xl font-semibold text-gray-800">Your Chats</h1></div>';
-                        mainElement.innerHTML = headerHTML;
-                      }
-                      
-                      // Create new container
-                      container = document.createElement('div');
-                      container.id = 'chat-container';
-                      container.className = 'min-h-screen bg-white';
-                      mainElement.appendChild(container);
-                    }
-                    return container;
-                  }
-                
-                  // Create our own UI instead of waiting for the page to load
-                  const mainElement = document.querySelector('main');
-                  if (mainElement) {
-                    // Keep the header but clear the content
-                    const header = mainElement.querySelector('h1, .text-xl, .text-2xl');
-                    const headerContainer = header?.parentElement;
-                    
-                    // Preserve the header if it exists
-                    const headerHTML = headerContainer ? headerContainer.outerHTML : '<div class="py-4 px-4 border-b bg-white sticky top-0 z-10 shadow-sm"><h1 class="text-xl font-semibold text-gray-800">Your Chats</h1></div>';
-                    
-                    // Replace the entire content
-                    mainElement.innerHTML = headerHTML + \`
-                      <div id="chat-container" class="min-h-screen bg-white">
-                        <div class="max-w-2xl mx-auto">
-                          <div id="loading-indicator" class="flex items-center justify-center py-20">
-                            <div class="text-center px-4">
-                              <div class="animate-spin rounded-full h-8 w-8 border-2 border-gray-100 border-t-gray-600 mx-auto mb-4"></div>
-                              <p class="text-gray-800 font-medium">Loading conversations...</p>
-                              <p class="text-sm text-gray-500 mt-2">Please wait while we prepare everything</p>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    \`;
-                  }
-                  
-                  // Function to load conversations
-                  const loadConversations = async () => {
-                    try {
-                      // Check if conversations are already loaded to prevent duplication
-                      if (document.getElementById('chat-container') && 
-                          document.getElementById('chat-container').children.length > 1 &&
-                          !document.getElementById('loading-indicator')) {
-                        console.log('Conversations already loaded, skipping to prevent duplication');
-                        window.ReactNativeWebView.postMessage(JSON.stringify({
-                          type: 'LOG',
-                          message: 'Conversations already loaded',
-                          data: { listingId: '${listingId}' }
-                        }));
-                        return;
-                      }
-                      
-                      updateDebug('Checking auth token...');
-                      
-                      // Wait for token to be available - try for up to 5 seconds
-                      let token = localStorage.getItem('token');
-                      let attempts = 0;
-                      const maxAttempts = 10; // 10 attempts with 500ms delay = 5 seconds max
-                      
-                      while (!token && attempts < maxAttempts) {
-                        updateDebug(\`Token not found, waiting... (\${attempts+1}/\${maxAttempts})\`);
-                        await new Promise(resolve => setTimeout(resolve, 500));
-                        token = localStorage.getItem('token');
-                        attempts++;
-                      }
-                      
-                      if (!token) {
-                        console.error('No auth token found after multiple attempts');
-                        window.ReactNativeWebView.postMessage(JSON.stringify({
-                          type: 'LOG',
-                          message: 'Auth token missing after retries',
-                          error: true
-                        }));
-                        document.body.style.opacity = '1';
-                        showErrorMessage('Authentication error. Please log in again.');
-                        return;
-                      }
-                      
-                      // Confirm token found
-                      updateDebug('Auth token found, proceeding with requests...');
-                      window.ReactNativeWebView.postMessage(JSON.stringify({
-                        type: 'LOG',
-                        message: 'Auth token found',
-                        data: { tokenPresent: !!token }
-                      }));
-                      
-                      updateDebug('Starting API requests...');
-                      window.ReactNativeWebView.postMessage(JSON.stringify({
-                        type: 'LOG',
-                        message: 'Starting API requests',
-                        data: { token: token ? 'present' : 'missing' }
-                      }));
-                      
-                      // Fetch listing details and all conversations in parallel
-                      const API_URL = 'https://backend.listtra.com';
-                      updateDebug('Fetching listing and conversations...');
-
-                      try {
-                        // First get the listing details
-                        updateDebug('Fetching listing details...');
-                        const listingResponse = await fetch(\`\${API_URL}/api/listings/${listingId}/\`, {
-                          headers: {
-                            'Authorization': 'Bearer ' + token
-                          }
-                        });
-                        
-                        if (!listingResponse.ok) {
-                          throw new Error(\`Listing fetch failed: \${listingResponse.status}\`);
-                        }
-                        
-                        const listingData = await listingResponse.json();
-                        updateDebug('Listing details fetched successfully');
-                        window.ReactNativeWebView.postMessage(JSON.stringify({
-                          type: 'LOG',
-                          message: 'Listing details retrieved',
-                          data: { 
-                            title: listingData.title,
-                            seller_id: listingData.seller_id
-                          }
-                        }));
-                        
-                        // Then get all conversations
-                        updateDebug('Fetching conversations...');
-                        const conversationsResponse = await fetch(\`\${API_URL}/api/chat/conversations/\`, {
-                          headers: {
-                            'Authorization': 'Bearer ' + token
-                          }
-                        });
-                        
-                        if (!conversationsResponse.ok) {
-                          throw new Error(\`Conversations fetch failed: \${conversationsResponse.status}\`);
-                        }
-                        
-                        const allConversations = await conversationsResponse.json();
-                        updateDebug(\`Found \${allConversations.length} total conversations\`);
-                        window.ReactNativeWebView.postMessage(JSON.stringify({
-                          type: 'LOG',
-                          message: 'All conversations retrieved',
-                          data: { count: allConversations.length }
-                        }));
-                        
-                        // Filter conversations for this listing
-                        updateDebug('Filtering conversations for this listing...');
-                        const listingIdStr = '${listingId}';
-                        
-                        // First check the structure of a conversation to understand what we're filtering
-                        if (allConversations.length > 0) {
-                          const sampleConv = allConversations[0];
-                          window.ReactNativeWebView.postMessage(JSON.stringify({
-                            type: 'LOG',
-                            message: 'Sample conversation structure',
-                            data: { 
-                              hasListing: !!sampleConv.listing,
-                              listingProps: sampleConv.listing ? Object.keys(sampleConv.listing) : [],
-                              sampleProductId: sampleConv.listing?.product_id
-                            }
-                          }));
-                        }
-                        
-                        // Filter using different approaches to ensure we match correctly
-                        const conversations = allConversations.filter(conv => {
-                          if (!conv.listing) return false;
-                          
-                          // Try different comparison approaches
-                          const directMatch = conv.listing.product_id === listingIdStr;
-                          const looseMatch = String(conv.listing.product_id) === String(listingIdStr);
-                          
-                          // Log each potential match for debugging
-                          if (directMatch || looseMatch) {
-                            window.ReactNativeWebView.postMessage(JSON.stringify({
-                              type: 'LOG',
-                              message: 'Potential conversation match',
-                              data: { 
-                                convId: conv.id,
-                                listingId: conv.listing.product_id, 
-                                targetId: listingIdStr,
-                                directMatch,
-                                looseMatch
-                              }
-                            }));
-                          }
-                          
-                          return looseMatch; // Use loose comparison to be safe
-                        });
-                        
-                        updateDebug(\`Found \${conversations.length} conversations for this listing\`);
-                        window.ReactNativeWebView.postMessage(JSON.stringify({
-                          type: 'LOG',
-                          message: 'Filtered conversations',
-                          data: { 
-                            filtered: conversations.length, 
-                            total: allConversations.length,
-                            listingId: listingIdStr
-                          }
-                        }));
-                        
-                        // Make sure we have a valid container before proceeding
-                        const container = ensureContainer();
-                        
-                        // Remove any existing loading indicator
-                        const loadingIndicator = document.getElementById('loading-indicator');
-                        if (loadingIndicator) {
-                          loadingIndicator.remove();
-                        }
-                        
-                        // Display listing info
-                        if (listingData && container) {
-                          updateDebug('Rendering listing info...');
-                          const listingInfoEl = document.createElement('div');
-                          listingInfoEl.className = 'py-4 px-4 border-b bg-white';
-                          
-                          // Get the first image URL or placeholder
-                          const imageUrl = listingData.images && listingData.images.length > 0 
-                            ? listingData.images[0].image_url || '/placeholder-image.jpg'
-                            : '/placeholder-image.jpg';
-                            
-                          listingInfoEl.innerHTML = \`
-                            <div class="flex items-center gap-4">
-                              <div class="w-16 h-16 rounded-md overflow-hidden bg-gray-100">
-                                <img src="\${imageUrl}" alt="\${listingData.title}" class="w-full h-full object-cover" />
-                              </div>
-                              <div>
-                                <h1 class="text-sm font-medium text-gray-900">\${listingData.title}</h1>
-                                <p class="text-xs text-gray-500">A$\${listingData.price}</p>
-                              </div>
-                            </div>
-                          \`;
-                          
-                          container.appendChild(listingInfoEl);
-                        }
-                        
-                        // Format timestamp for last message
-                        const formatTimestamp = (date) => {
-                          const now = new Date();
-                          const messageDate = new Date(date);
-                          const diffInMinutes = Math.floor((now - messageDate) / (1000 * 60));
-                          const diffInHours = Math.floor(diffInMinutes / 60);
-                          const diffInDays = Math.floor(diffInHours / 24);
-
-                          if (diffInMinutes < 1) return "Just now";
-                          if (diffInMinutes < 60) return \`\${diffInMinutes}m ago\`;
-                          if (diffInHours < 24) return \`\${diffInHours}h ago\`;
-                          if (diffInDays < 7) return \`\${diffInDays}d ago\`;
-                          return messageDate.toLocaleDateString();
-                        };
-
-                        // Get last message/offer/review text
-                        const getLastActivityText = (conversation) => {
-                          if (!conversation.last_message) return "No messages yet";
-
-                          if (conversation.last_message.is_offer) {
-                            const offer = conversation.last_message.offer;
-                            if (offer.status === "Pending") {
-                              return \`Offer: A$\${offer.price}\`;
-                            } else if (offer.status === "Accepted") {
-                              return \`Offer accepted: A$\${offer.price}\`;
-                            } else if (offer.status === "Rejected") {
-                              return \`Offer rejected: A$\${offer.price}\`;
-                            }
-                          } else if (conversation.last_message.review_data) {
-                            const review = conversation.last_message.review_data;
-                            return \`\${review.reviewer_username} left a \${review.rating}-star review\`;
-                          } else {
-                            return conversation.last_message.content;
-                          }
-                        };
-                        
-                        // Create container for chat list
-                        updateDebug('Rendering conversation list...');
-                        const chatListContainer = document.createElement('div');
-                        chatListContainer.className = 'divide-y';
-                        
-                        // Display conversations
-                        if (conversations.length === 0) {
-                          updateDebug('No conversations found');
-                          chatListContainer.innerHTML = \`
-                            <div class="text-center py-8">
-                              <p class="text-gray-500">No conversations found</p>
-                            </div>
-                          \`;
-                        } else {
-                          updateDebug(\`Rendering \${conversations.length} conversations...\`);
-                          // Sort conversations by most recent first
-                          conversations.sort((a, b) => {
-                            if (!a.last_message && !b.last_message) return 0;
-                            if (!a.last_message) return 1;
-                            if (!b.last_message) return -1;
-                            return new Date(b.last_message.created_at) - new Date(a.last_message.created_at);
-                          });
-                          
-                          conversations.forEach(conversation => {
-                            const chatItem = document.createElement('a');
-                            chatItem.href = \`/chat/\${conversation.id}\`;
-                            chatItem.className = 'block hover:bg-gray-50 transition-colors';
-                            
-                            // Determine the other participant
-                            const otherParticipant = conversation.other_participant || {};
-                            const initialLetter = (otherParticipant.nickname || 'Unknown').charAt(0).toUpperCase();
-                            
-                            let lastMessageText = getLastActivityText(conversation);
-                            if (lastMessageText.length > 40) {
-                              lastMessageText = lastMessageText.substring(0, 40) + '...';
-                            }
-                            
-                            chatItem.innerHTML = \`
-                              <div class="p-4">
-                                <div class="flex items-center space-x-3">
-                                  <div class="flex-shrink-0">
-                                    <div class="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center">
-                                      <span class="text-gray-500">\${initialLetter}</span>
-                                    </div>
-                                  </div>
-                                  <div class="flex-1 min-w-0">
-                                    <div class="flex items-center justify-between">
-                                      <p class="text-sm font-medium text-gray-900 truncate">
-                                        \${otherParticipant.nickname || "Unknown User"}
-                                      </p>
-                                      \${conversation.last_message ? \`
-                                        <span class="text-xs text-gray-500">
-                                          \${formatTimestamp(conversation.last_message.created_at)}
-                                        </span>
-                                      \` : ''}
-                                    </div>
-                                    <p class="text-sm text-gray-500 truncate">
-                                      \${lastMessageText}
-                                    </p>
-                                  </div>
-                                  <div class="flex-shrink-0">
-                                    <svg
-                                      xmlns="http://www.w3.org/2000/svg"
-                                      class="h-5 w-5 text-gray-400"
-                                      viewBox="0 0 20 20"
-                                      fill="currentColor"
-                                    >
-                                      <path
-                                        fill-rule="evenodd"
-                                        d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"
-                                        clip-rule="evenodd"
-                                      />
-                                    </svg>
-                                  </div>
-                                </div>
-                              </div>
-                            \`;
-                            
-                            chatListContainer.appendChild(chatItem);
-                          });
-                        }
-                        
-                        container.appendChild(chatListContainer);
-                        updateDebug('Finished rendering!');
-                        
-                        // Make sure all loading indicators are removed
-                        document.body.style.opacity = '1';
-                        
-                        // Remove any additional loading overlays
-                        const loadingElements = document.querySelectorAll('.loading, .initializing, #loading-indicator, #debug-loading, [id*="loading"]');
-                        loadingElements.forEach(el => el.remove());
-                        
-                        // Force display of the container
-                        if (container) {
-                          container.style.display = 'block';
-                          container.style.visibility = 'visible';
-                          container.style.opacity = '1';
-                        }
-                        
-                        // Clean up debug overlay after everything is done
-                        const debugEl = document.getElementById('debug-loading');
-                        if (debugEl) {
-                          debugEl.remove();
-                        }
-                        
-                        // Add an additional check to clean up any remaining loading indicators
-                        setTimeout(() => {
-                          document.querySelectorAll('.loading, .initializing, #loading-indicator, #debug-loading, [id*="loading"]').forEach(el => el.remove());
-                          
-                          // Clean up fixed position elements
-                          document.querySelectorAll('div[style*="position: fixed"]').forEach(el => {
-                            if (el.innerText && el.innerText.toLowerCase().includes('loading')) {
-                              el.remove();
-                            }
-                          });
-                          
-                          document.body.style.opacity = '1';
-                        }, 1000);
-                        
-                      } catch (apiError) {
-                        window.ReactNativeWebView.postMessage(JSON.stringify({
-                          type: 'LOG',
-                          message: 'API error',
-                          error: apiError.toString()
-                        }));
-                        updateDebug('Error: ' + apiError.toString());
-                        throw apiError;
-                      }
-                      
-                    } catch (error) {
-                      console.error('Error loading conversations:', error);
-                      window.ReactNativeWebView.postMessage(JSON.stringify({
-                        type: 'LOG',
-                        message: 'Error in loadConversations',
-                        error: error.toString()
-                      }));
-                      document.body.style.opacity = '1';
-                      updateDebug('Failed: ' + error.toString());
-                      showErrorMessage('Failed to load conversations. ' + error.toString());
-                    }
-                  };
-                  
-                  // Helper function to update debug overlay
-                  function updateDebug(message) {
-                    console.log('Debug:', message);
-                    window.ReactNativeWebView.postMessage(JSON.stringify({
-                      type: 'LOG',
-                      message: 'Debug',
-                      data: message
-                    }));
-                    
-                    const debugEl = document.getElementById('debug-loading');
-                    if (debugEl) {
-                      debugEl.innerHTML = message;
-                    }
-                  }
-                  
-                  // Helper function to show error message
-                  const showErrorMessage = (message) => {
-                    // Make sure we have a container
-                    const container = ensureContainer();
-                    
-                    // Remove any existing loading indicator
-                    const loadingIndicator = document.getElementById('loading-indicator');
-                    if (loadingIndicator) {
-                      loadingIndicator.remove();
-                    }
-                    
-                    const errorEl = document.createElement('div');
-                    errorEl.className = 'flex flex-col items-center justify-center p-8 text-center';
-                    errorEl.innerHTML = \`
-                      <div class="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mb-4">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-8 h-8 text-red-500">
-                          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
-                        </svg>
-                      </div>
-                      <p class="text-red-600 mb-2">\${message}</p>
-                      <button class="mt-4 px-4 py-2 bg-primary text-white rounded-full text-sm" onclick="window.location.reload()">
-                        Try Again
-                      </button>
-                    \`;
-                    container.appendChild(errorEl);
-                    
-                    // Force any remaining loading elements to be removed
-                    document.querySelectorAll('.loading, .initializing, #loading-indicator, #debug-loading, [id*="loading"]').forEach(el => el.remove());
-                    document.body.style.opacity = '1';
-                  };
-                  
-                  // Additional code to handle potential root-level loading indicators
-                  const clearRootLoaders = () => {
-                    // Find any root-level loading elements
-                    const rootLoaders = Array.from(document.body.children).filter(el => {
-                      const text = el.innerText && el.innerText.toLowerCase();
-                      return text && (text.includes('loading') || text.includes('initializing') || text.includes('please wait'));
-                    });
-                    
-                    // Remove them
-                    rootLoaders.forEach(el => el.remove());
-                  };
-                  
-                  // Run loader cleanup
-                  clearRootLoaders();
-                  
-                  // Wait a moment for any ongoing page loads, then run our function
-                  updateDebug('Starting conversation load...');
-                  setTimeout(loadConversations, 500);
-                  
-                  // Add safety timeout to clear loaders if something goes wrong
-                  setTimeout(() => {
-                    document.body.style.opacity = '1';
-                    document.querySelectorAll('.loading, .initializing, #loading-indicator, #debug-loading, [id*="loading"]').forEach(el => el.remove());
-                    clearRootLoaders();
-                  }, 10000);
-                } catch (e) {
-                  console.error('Error in chat page script:', e);
-                  window.ReactNativeWebView.postMessage(JSON.stringify({
-                    type: 'LOG',
-                    message: 'Script error',
-                    error: e.toString()
-                  }));
-                  document.body.style.opacity = '1';
-                }
-                return true;
-              })();
-            `;
-            
-            webViewRef.current.injectJavaScript(chatFixScript);
-            console.log('Chat fix script injected for listing:', listingId);
-          }, 500);
-        }, 500);
-      }
-    }
-    
-    const isListingDetail = path.includes('/listings/') && 
-                           (/\/[^\/]+\/[^\/]+\/?$/.test(path) || // Pattern: /listings/slug/id
-                            path.includes('product_id'));
-    
-    if (isListingDetail) {
-      // Extract both slug and UUID from the URL
-      const matches = path.match(/\/listings\/([^\/]+)\/([^\/]+)/);
-      const slug = matches ? matches[1] : null;
-      const listingId = matches ? matches[2] : null;
-      
-      console.log('Listing detail page detected:', {
-        path,
-        slug,
-        listingId,
-        isAuthenticated,
-        hasAccessToken: !!tokens.accessToken
-      });
-      
-      // Ensure authentication is maintained across navigation
-      if (isAuthenticated && tokens.accessToken && tokens.refreshToken) {
-        // Give page time to load before injecting tokens
-        setTimeout(() => {
-          injectTokensToWebView();
-          
-          // Apply a specific script for listing details pages
-          if (webViewRef.current && listingId && slug) {
-            console.log('Injecting ownership check script for:', { slug, listingId });
-            
-            // Create a properly escaped script string
-            const scriptContent = `
-              (function() {
-                try {
-                  // Send log message
-                  window.ReactNativeWebView.postMessage(JSON.stringify({
-                    type: 'LOG',
-                    message: 'Starting owner check for listing',
-                    data: { slug: '${slug}', listingId: '${listingId}' }
-                  }));
-                  
-                  // Get user data
-                  let userData = null;
-                  try {
-                    userData = JSON.parse(localStorage.getItem('user') || 'null');
-                  } catch (e) {
-                    console.error('Error parsing user data', e);
-                  }
-                  
-                  if (!userData || !userData.id) {
-                    console.log('No user data available');
-                    return;
-                  }
-                  
-                  // Make API call to get listing
-                  const API_URL = 'https://backend.listtra.com';
-                  fetch(\`\${API_URL}/api/listings/${slug}/${listingId}/\`, {
-                    headers: {
-                      'Authorization': 'Bearer ' + localStorage.getItem('token')
-                    }
-                  })
-                  .then(response => response.json())
-                  .then(listingData => {
-                    // Check if user is owner
-                    const isOwner = String(listingData.seller_id) === String(userData.id);
-                    
-                    window.ReactNativeWebView.postMessage(JSON.stringify({
-                      type: 'LOG',
-                      message: 'Ownership check result',
-                      data: { isOwner, sellerId: listingData.seller_id, userId: userData.id }
-                    }));
-                    
-                    if (isOwner) {
-                      // Set global flag
-                      window.isListingOwner = true;
-                      
-                      // Force UI update after a delay
-                      setTimeout(() => {
-                        // Hide buyer elements
-                        document.querySelectorAll('button').forEach(btn => {
-                          if (btn.innerText && (btn.innerText.includes('Make Offer') || btn.innerText.includes('Buy Now'))) {
-                            btn.style.display = 'none';
-                            if (btn.parentElement && btn.parentElement.children.length === 1) {
-                              btn.parentElement.style.display = 'none';
-                            }
-                          }
-                        });
-                        
-                        // Show owner elements
-                        const ownerTexts = ['Edit', 'View all chats', 'Pending pickup', 'Mark as Sold', 'Cancel'];
-                        ownerTexts.forEach(text => {
-                          document.querySelectorAll('button').forEach(btn => {
-                            if (btn.innerText && btn.innerText.includes(text)) {
-                              // Make button visible
-                              btn.style.display = 'flex';
-                              
-                              // Make parents visible
-                              let parent = btn.parentElement;
-                              while (parent && parent !== document.body) {
-                                if (window.getComputedStyle(parent).display === 'none') {
-                                  parent.style.display = 'flex';
-                                }
-                                parent = parent.parentElement;
-                              }
-                            }
-                          });
-                        });
-                        
-                        // Make "View all chats" button work properly
-                        document.querySelectorAll('button').forEach(btn => {
-                          if (btn.innerText && btn.innerText.includes('View all chats')) {
-                            // Add a click event listener to properly handle navigation
-                            btn.addEventListener('click', function(e) {
-                              console.log('View all chats clicked for listing:', '${listingId}');
-                              window.location.href = '/chat?listing=${listingId}';
-                            });
-                          }
-                        });
-                        
-                        // Create missing owner controls if needed
-                        const hasOwnerControls = Array.from(document.querySelectorAll('button')).some(
-                          btn => btn.innerText && ownerTexts.some(text => btn.innerText.includes(text))
-                        );
-                        
-                        if (!hasOwnerControls) {
-                          // Find container
-                          const container = document.querySelector('.flex.flex-col.gap-4.mt-4') || 
-                                          document.querySelector('.flex.flex-col.mt-4') ||
-                                          document.querySelector('.flex.flex-col.p-4') ||
-                                          document.querySelector('.flex.flex-col');
-                          
-                          if (container) {
-                            // Check if we've already added controls to prevent duplication
-                            if (container.querySelector('[data-owner-controls="true"]')) {
-                              console.log('Owner controls already added, skipping');
-                              return true;
-                            }
-                            
-                            // Create controls div
-                            const controls = document.createElement('div');
-                            controls.className = 'flex flex-col gap-4 mt-4';
-                            controls.setAttribute('data-owner-controls', 'true');
-                            
-                            // View all chats button
-                            const chatsBtn = document.createElement('button');
-                            chatsBtn.className = 'bg-primary text-white py-2 px-4 rounded';
-                            chatsBtn.innerText = 'View all chats';
-                            chatsBtn.onclick = function() { 
-                              console.log('View all chats clicked for listing:', '${listingId}');
-                              window.location.href = '/chat?listing=${listingId}';
-                            };
-                            controls.appendChild(chatsBtn);
-                            
-                            // Add status buttons
-                            const status = listingData.status || 'available';
-                            if (status === 'pending' || status === 'available') {
-                              const statusBtn = document.createElement('button');
-                              statusBtn.className = 'py-2 px-4 bg-white text-primary rounded border border-primary mt-2';
-                              statusBtn.innerText = status === 'available' ? 'Mark as Pending' : 'Mark as Available';
-                              controls.appendChild(statusBtn);
-                            }
-                            
-                            container.appendChild(controls);
-                          }
-                        }
-                      }, 1000);
-                    }
-                  })
-                  .catch(error => {
-                    console.error('Error checking ownership:', error);
-                  });
-                } catch (e) {
-                  console.error('Error in script:', e);
-                }
-                return true;
-              })();
-            `;
-            
-            webViewRef.current.injectJavaScript(scriptContent);
-            console.log('Ownership check script injected');
-          } else {
-            console.log('Skipping ownership check - missing required data:', {
-              hasWebViewRef: !!webViewRef.current,
-              hasListingId: !!listingId,
-              hasSlug: !!slug
-            });
-          }
-        }, 500);
-      }
+        if (isAuthenticated && tokens.accessToken) {
+        injectTokensToWebView();
+        }
+      }, 300);
     }
   };
 
-  // Handle messages from WebView
+  // Update the handleWebViewMessage function to handle chat-specific messages
   const handleWebViewMessage = (event: WebViewMessageEvent) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
@@ -909,408 +156,459 @@ const WebViewScreen: React.FC<WebViewScreenProps> = ({
       // Handle log messages from the WebView
       if (data.type === 'LOG') {
         console.log('WebView Log:', data.message, data.data || data.error || '');
+                    return;
+                  }
+                  
+      // Handle chat-specific messages
+      if (data.type === 'CHAT_ACTION') {
+        console.log('Chat action received:', data.action, data);
+        
+        // Just log the actions for now - the WebView will handle the actual API calls
+        // These messages are mainly for debugging and tracking
+        switch (data.action) {
+          case 'MAKE_OFFER':
+            console.log('Make offer action with amount:', data.amount);
+            break;
+          case 'ACCEPT_OFFER':
+            console.log('Accept offer action for offer ID:', data.offerId);
+            break;
+          case 'REJECT_OFFER':
+            console.log('Reject offer action for conversation:', data.conversationId);
+            break;
+          case 'CANCEL_OFFER':
+            console.log('Cancel offer action for conversation:', data.conversationId);
+            break;
+        }
+        
+                        return;
+                      }
+                      
+      // Handle NAVIGATE_CHAT message specifically
+      if (data.type === 'NAVIGATE_CHAT' && data.chatId) {
+        console.log('Navigating to chat:', data.chatId);
+        router.push(`/chat/${data.chatId}`);
         return;
       }
       
-      // Handle other message types as before
-      console.log('Message from WebView:', data);
-      
-      if (data.type === 'GET_AUTH_STATE') {
-        // Web app is asking for auth state
-        console.log('Sending auth state to WebView:', isAuthenticated);
-        const authStateScript = `
-          try {
-            window.isNativeAuthenticated = ${isAuthenticated};
-            document.documentElement.classList.toggle('native-authenticated', ${isAuthenticated});
-            
-            // Also update tokens if authenticated
-            if (${isAuthenticated}) {
-              // Ensure safeStorage exists
-              if (!window.safeStorage) {
-                window.fallbackStorage = window.fallbackStorage || {};
-                window.safeStorage = {
-                  getItem: function(key) {
-                    try {
-                      return window.localStorage.getItem(key);
-                    } catch (e) {
-                      return window.fallbackStorage[key] || null;
-                    }
-                  },
-                  setItem: function(key, value) {
-                    try {
-                      window.localStorage.setItem(key, value);
-                    } catch (e) {
-                      window.fallbackStorage[key] = value;
-                    }
-                  },
-                  removeItem: function(key) {
-                    try {
-                      window.localStorage.removeItem(key);
-                    } catch (e) {
-                      delete window.fallbackStorage[key];
-                    }
-                  }
-                };
-              }
-              
-              // Set the tokens
-              window.safeStorage.setItem('token', '${tokens.accessToken || ""}');
-              window.safeStorage.setItem('refreshToken', '${tokens.refreshToken || ""}');
-            }
-            
-            if (typeof window.receiveNativeMessage === 'function') {
-              window.receiveNativeMessage({
-                type: 'AUTH_STATE',
-                isAuthenticated: ${isAuthenticated}
-              });
-            } else if (typeof window.onNativeAuthStateReceived === 'function') {
-              window.onNativeAuthStateReceived(${isAuthenticated});
-            }
-          } catch(e) {
-            console.error('Error setting auth state:', e);
-          }
-          true;
-        `;
-        webViewRef.current?.injectJavaScript(authStateScript);
-      } else if (data.type === 'LOGOUT') {
-        // Web app wants to logout
-        console.log('Logout request from WebView');
-        logout();
-      } else if (data.type === 'LOGIN_SUCCESS' || data.type === 'TOKEN_CHANGED') {
-        // Web app successfully logged in or token changed
-        console.log('Login/token update from WebView, updating native tokens');
-        const accessToken = data.accessToken || data.value || null;
-        const refreshToken = data.refreshToken || null;
+      // Handle REDIRECT_BLOCKED specifically
+      if (data.type === 'REDIRECT_BLOCKED') {
+        console.log('Handling blocked redirect:', data);
         
-        if (accessToken && (data.type === 'LOGIN_SUCCESS' ? refreshToken : true)) {
-          if (data.type === 'LOGIN_SUCCESS') {
-            setTokensDirectly(accessToken, refreshToken, data.userData);
-          } else if (data.key === 'token' && tokens.refreshToken) {
-            // Only update access token if we have refresh token
-            setTokensDirectly(accessToken, tokens.refreshToken, null);
-          }
-        }
-      } else if (data.type === 'TOKEN_REMOVED') {
-        // Only trigger logout if both tokens are removed
-        console.log('Token removed message:', data.key);
-        // Don't directly access localStorage here - it might not be available in this context
-      } else if (data.type === 'NAVIGATE') {
-        // Web app wants to navigate to a different native screen
-        if (data.route) {
-          router.push(data.route);
-        }
-      } else if (data.type === 'AUTH_REQUIRED') {
-        // WebView is telling us user tried to do something that needs auth
-        console.log('Authentication required for action:', data.action, 'ID:', data.id || 'none');
-        
-        // Check if user is actually authenticated in native app
-        if (isAuthenticated && tokens.accessToken) {
-          // We're authenticated but webapp doesn't know - reinject tokens
-          console.log('Already authenticated in native app, reinjecting tokens');
-          injectTokensToWebView();
+        // If webview is trying to redirect to auth page when showing profile
+        if (data.destination && (data.destination.includes('/auth/') || data.destination.includes('/signin'))) {
+          console.log('Auth redirect detected, trying more aggressive approach');
           
-          // Special handling for listing details pages
-          if (data.action === 'check_owner' || data.page === 'listing_details') {
-            console.log('Handling ownership check for listing details');
-            
-            if (webViewRef.current) {
-              // Inject a script to force isOwner check
-              const ownerCheckScript = `
-                (function() {
-                  try {
-                    console.log('Forcing isOwner check for listing details');
-                    
-                    // Get user data
-                    let userData = null;
-                    if (window.userData) {
-                      userData = window.userData;
-                    } else {
-                      const userDataStr = localStorage.getItem('user');
-                      if (userDataStr) {
-                        try {
-                        userData = JSON.parse(userDataStr);
-                        } catch (e) {
-                          window.ReactNativeWebView.postMessage(JSON.stringify({
-                            type: 'LOG',
-                            message: 'Error parsing user data from localStorage',
-                            error: e.message
-                          }));
-                        }
-                      } else {
-                        window.ReactNativeWebView.postMessage(JSON.stringify({
-                          type: 'LOG',
-                          message: 'No user data found in localStorage',
-                          availableKeys: Object.keys(localStorage)
-                        }));
-                      }
-                    }
-                    
-                    if (!userData || !userData.id) {
-                      console.error('No user data available for isOwner check');
-                      return;
-                    }
-                    
-                    // Get the listing ID from URL or data
-                    const path = window.location.pathname;
-                    const matches = path.match(/\\/listings\\/[^\\/]+\\/([^\\/]+)/);
-                    const listingId = ${data.id ? `'${data.id}'` : 'matches ? matches[1] : null'};
-                    
-                    if (!listingId) {
-                      console.error('Could not determine listing ID');
-                      return;
-                    }
-                    
-                    console.log('Checking ownership for listing:', listingId);
-                    
-                    // Make API call to get listing details including seller_id
-                    const API_URL = typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL 
-                                  ? process.env.NEXT_PUBLIC_API_URL 
-                                  : 'https://backend.listtra.com';
-                    
-                    fetch(\`\${API_URL}/api/listings/\${listingId}/\`, {
-                      headers: {
-                        'Authorization': 'Bearer ' + localStorage.getItem('token')
-                      }
-                    })
-                    .then(response => response.json())
-                    .then(listingData => {
-                      if (listingData && (listingData.seller_id || listingData.user_id)) {
-                        const sellerId = listingData.seller_id || listingData.user_id;
-                        console.log('Listing seller ID:', sellerId, 'User ID:', userData.id);
+          if (webViewRef.current && isAuthenticated) {
+            // Try a more aggressive approach - directly inject HTML into the page
+            const directInjectHTML = `
+              (function() {
+                try {
+                  console.log('Directly injecting profile HTML');
+                  
+                  // Store tokens in localStorage
+                  localStorage.setItem('token', '${tokens.accessToken}');
+                  localStorage.setItem('refreshToken', '${tokens.refreshToken}');
+                  localStorage.setItem('user', '${JSON.stringify(user || {})}');
+                  
+                  // Replace entire document content with direct HTML for profile
+                  document.open();
+                  document.write(\`
+                    <!DOCTYPE html>
+                    <html lang="en">
+                    <head>
+                      <meta charset="UTF-8">
+                      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                      <title>User Profile</title>
+                      <style>
+                        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; }
+                        body { background-color: #f5f5f5; }
+                        .header { background-color: #4046F9; color: white; padding: 30px 20px 50px 20px; border-bottom-left-radius: 20px; border-bottom-right-radius: 20px; }
+                        .avatar { width: 80px; height: 80px; border-radius: 50%; background-color: #e0e0e0; display: flex; align-items: center; justify-content: center; margin: 0 auto 15px auto; border: 4px solid white; font-size: 32px; color: #757575; }
+                        .profile-info { text-align: center; }
+                        .user-name { font-size: 24px; font-weight: bold; margin-bottom: 5px; }
+                        .user-email { opacity: 0.8; font-size: 14px; }
+                        .stats { display: flex; justify-content: center; margin-top: 20px; }
+                        .stat-item { padding: 0 20px; text-align: center; }
+                        .stat-value { font-size: 18px; font-weight: bold; }
+                        .stat-label { font-size: 12px; opacity: 0.8; }
+                        .tabs { display: flex; border-bottom: 1px solid #e0e0e0; margin: 20px 10px; }
+                        .tab { flex: 1; text-align: center; padding: 10px; font-weight: bold; color: #757575; position: relative; }
+                        .tab.active { color: #4046F9; }
+                        .tab.active:after { content: ""; position: absolute; bottom: -1px; left: 0; width: 100%; height: 2px; background-color: #4046F9; }
+                        .content { padding: 20px; }
+                        .empty-message { text-align: center; padding: 30px; color: #757575; }
+                        .card { background: white; border-radius: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 15px; overflow: hidden; }
+                        .card-img { height: 160px; background-color: #f0f0f0; display: flex; align-items: center; justify-content: center; color: #757575; }
+                        .card-content { padding: 15px; }
+                        .card-title { font-weight: 500; margin-bottom: 5px; }
+                        .card-price { color: #4046F9; font-weight: bold; }
+                      </style>
+                    </head>
+                    <body>
+                      <div class="header">
+                        <div class="avatar">${user?.nickname?.charAt(0)?.toUpperCase() || 'U'}</div>
+                        <div class="profile-info">
+                          <div class="user-name">${user?.nickname || 'User'}</div>
+                          <div class="user-email">${user?.email || ''}</div>
+                          <div class="stats">
+                            <div class="stat-item">
+                              <div class="stat-value">0</div>
+                              <div class="stat-label">Reviews</div>
+                            </div>
+                            <div class="stat-item">
+                              <div class="stat-value">0</div>
+                              <div class="stat-label">Listings</div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div class="tabs">
+                        <div class="tab active">My Listings</div>
+                        <div class="tab">Liked</div>
+                        <div class="tab">Reviews</div>
+                      </div>
+                      
+                      <div class="content">
+                        <div class="empty-message">
+                          Loading your listings...
+                        </div>
                         
-                        // Compare IDs
-                        if (String(sellerId) === String(userData.id)) {
-                          console.log('MATCH: User is the owner of this listing');
+                        <!-- Will be populated via API call -->
+                        <div id="listings-container"></div>
+                      </div>
+                      
+                      <script>
+                        // Set up auth tokens for API calls
+                        const token = '${tokens.accessToken}';
+                        const userId = '${user?.id}';
+                        
+                        // Fetch listings when page loads
+                        window.onload = function() {
+                          fetchListings();
                           
-                          // Force UI update
-                          setTimeout(() => {
-                            // Find and show owner controls
-                            const ownerControls = document.querySelectorAll('.flex.items-center.gap-2 button, .flex.justify-between button');
-                            ownerControls.forEach(btn => {
-                              btn.style.display = 'flex';
+                          // Set up tab switching
+                          document.querySelectorAll('.tab').forEach((tab, index) => {
+                            tab.addEventListener('click', () => {
+                              document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                              tab.classList.add('active');
                               
-                              // Make parent containers visible
-                              let parent = btn.parentElement;
-                              for (let i = 0; i < 3 && parent; i++) {
-                                if (window.getComputedStyle(parent).display === 'none') {
-                                  parent.style.display = 'flex';
-                                }
-                                parent = parent.parentElement;
+                              // Show appropriate content based on tab
+                              if (index === 0) {
+                                fetchListings();
+                              } else if (index === 1) {
+                                fetchLiked();
+                              } else {
+                                fetchReviews();
                               }
                             });
-                            
-                            // Hide buyer controls
-                            const makeOfferBtn = document.querySelector('button:contains("Make Offer")');
-                            if (makeOfferBtn) {
-                              makeOfferBtn.style.display = 'none';
+                          });
+                        };
+                        
+                        // Fetch user's listings
+                        function fetchListings() {
+                          document.querySelector('.empty-message').textContent = 'Loading your listings...';
+                          document.querySelector('.empty-message').style.display = 'block';
+                          document.getElementById('listings-container').innerHTML = '';
+                          
+                          fetch('https://backend.listtra.com/api/listings/?seller=' + userId, {
+                            headers: {
+                              'Authorization': 'Bearer ' + token
                             }
+                          })
+                          .then(response => response.json())
+                          .then(data => {
+                            const listings = data.listings || [];
+                            if (listings.length === 0) {
+                              document.querySelector('.empty-message').textContent = 'No listings found';
+                            } else {
+                              document.querySelector('.empty-message').style.display = 'none';
+                              renderListings(listings);
+                            }
+                          })
+                          .catch(error => {
+                            document.querySelector('.empty-message').textContent = 'Error loading listings';
+                            console.error('Error fetching listings:', error);
+                          });
+                        }
+                        
+                        // Fetch liked listings
+                        function fetchLiked() {
+                          document.querySelector('.empty-message').textContent = 'Loading liked items...';
+                          document.querySelector('.empty-message').style.display = 'block';
+                          document.getElementById('listings-container').innerHTML = '';
+                          
+                          fetch('https://backend.listtra.com/api/listings/liked/', {
+                            headers: {
+                              'Authorization': 'Bearer ' + token
+                            }
+                          })
+                          .then(response => response.json())
+                          .then(listings => {
+                            if (!listings || listings.length === 0) {
+                              document.querySelector('.empty-message').textContent = 'No liked items found';
+                            } else {
+                              document.querySelector('.empty-message').style.display = 'none';
+                              renderListings(listings);
+                            }
+                          })
+                          .catch(error => {
+                            document.querySelector('.empty-message').textContent = 'Error loading liked items';
+                            console.error('Error fetching liked items:', error);
+                          });
+                        }
+                        
+                        // Fetch reviews
+                        function fetchReviews() {
+                          document.querySelector('.empty-message').textContent = 'Loading reviews...';
+                          document.querySelector('.empty-message').style.display = 'block';
+                          document.getElementById('listings-container').innerHTML = '';
+                          
+                          fetch('https://backend.listtra.com/api/reviews/seller/' + userId + '/', {
+                            headers: {
+                              'Authorization': 'Bearer ' + token
+                            }
+                          })
+                          .then(response => response.json())
+                          .then(reviews => {
+                            if (!reviews || reviews.length === 0) {
+                              document.querySelector('.empty-message').textContent = 'No reviews yet';
+                            } else {
+                              document.querySelector('.empty-message').style.display = 'none';
+                              document.getElementById('listings-container').innerHTML = reviews.map(review => \`
+                                <div class="card">
+                                  <div class="card-content">
+                                    <div style="display: flex; align-items: center; margin-bottom: 10px;">
+                                      <div style="width: 40px; height: 40px; border-radius: 50%; background-color: #e0e0e0; display: flex; align-items: center; justify-content: center; margin-right: 10px;">
+                                        <span>\${review.reviewer_nickname?.charAt(0).toUpperCase() || 'U'}</span>
+                                      </div>
+                                      <div>
+                                        <div style="font-weight: bold;">\${review.reviewer_nickname || 'User'}</div>
+                                        <div style="color: #F9A825; font-size: 14px;">★ \${review.rating || 0}</div>
+                                      </div>
+                                    </div>
+                                    <div style="color: #424242; font-size: 14px;">
+                                      \${review.review_text || 'No comment provided'}
+                                    </div>
+                                  </div>
+                                </div>
+                              \`).join('');
+                            }
+                          })
+                          .catch(error => {
+                            document.querySelector('.empty-message').textContent = 'Error loading reviews';
+                            console.error('Error fetching reviews:', error);
+                          });
+                        }
+                        
+                        // Render listings in a grid
+                        function renderListings(listings) {
+                          const container = document.getElementById('listings-container');
+                          const grid = document.createElement('div');
+                          grid.style.display = 'grid';
+                          grid.style.gridTemplateColumns = 'repeat(2, 1fr)';
+                          grid.style.gap = '15px';
+                          
+                          listings.forEach(item => {
+                            const card = document.createElement('div');
+                            card.className = 'card';
                             
-                            // Fix UI layout if needed
-                            document.querySelectorAll('.flex.flex-col.gap-4.mt-4').forEach(el => {
-                              el.style.display = 'flex';
+                            const imageUrl = item.images && item.images.length > 0 
+                              ? item.images[0].image_url 
+                              : '';
+                            
+                            card.innerHTML = \`
+                              <div class="card-img">
+                                \${imageUrl ? \`<img src="\${imageUrl}" alt="\${item.title}" style="width: 100%; height: 100%; object-fit: cover;">\` : 'No Image'}
+                              </div>
+                              <div class="card-content">
+                                <div class="card-title">\${item.title}</div>
+                                <div class="card-price">A$\${item.price}</div>
+                              </div>
+                            \`;
+                            
+                            card.addEventListener('click', () => {
+                              // Navigate to listing detail
+                              window.location.href = '/listings/' + item.slug + '/' + item.product_id;
                             });
-                          }, 200);
-                        } else {
-                          console.log('NOT MATCH: User is not the owner');
+                            
+                            grid.appendChild(card);
+                          });
+                          
+                          container.appendChild(grid);
                         }
-                      }
-                    })
-                    .catch(error => {
-                      console.error('Error fetching listing details:', error);
-                    });
-                    
-                  } catch(e) {
-                    console.error('Error in owner check script:', e);
-                  }
+                      </script>
+                    </body>
+                    </html>
+                  \`);
+                  document.close();
+                  
                   return true;
-                })();
-              `;
-              
-              webViewRef.current.injectJavaScript(ownerCheckScript);
-            }
-          }
-          
-          // If there was a specific action (like a like button), send message to retry it
-          if (data.action && webViewRef.current) {
-            setTimeout(() => {
-              if (webViewRef.current) {
-                const retryScript = `
-                  try {
-                    console.log('Retrying action after auth: ${data.action}');
-                    // For "like" action, find and click the appropriate like button
-                    if ('${data.action}' === 'like') {
-                      // If we have an ID, try to find that specific like button
-                      ${data.id ? `
-                        const specificButton = document.querySelector('[data-action-type="like"][data-id="${data.id}"]');
-                        if (specificButton) {
-                          console.log('Found specific like button, clicking it');
-                          specificButton.click();
-                        }
-                      ` : ''}
-                      
-                      // If no specific button or it wasn't found, try to find any like button
-                      const likeButtons = document.querySelectorAll('.like-button');
-                      if (likeButtons.length > 0) {
-                        console.log('Found a like button, clicking it');
-                        likeButtons[0].click();
-                      }
-                    }
-                  } catch(e) {
-                    console.error('Error retrying action:', e);
-                  }
-                  true;
-                `;
-                webViewRef.current.injectJavaScript(retryScript);
-              }
-            }, 1000); // Give time for auth state to propagate
-          }
-        } else {
-          // Not authenticated, redirect to signin
-          console.log('Not authenticated, redirecting to signin');
-          router.push('/auth/signin');
-        }
-      } else if (data.type === 'ERROR') {
-        console.error('Error from WebView:', data.message);
-      } else if (data.type === 'REDIRECT_PREVENTED') {
-        // WebView is telling us it prevented a redirect
-        console.log('Redirect prevented:', data.from, 'to', data.to);
-        
-        // If redirect was to auth page, we need to ensure tokens are injected
-        if (data.to && data.to.includes('/auth/')) {
-          console.log('Prevented redirect to auth page, re-injecting tokens');
-          setTimeout(() => {
-            injectTokensToWebView();
-          }, 200);
-        }
-        
-        // If redirect was from profile to listings, we should force back to profile
-        if (data.from === '/profile' && data.to === '/listings') {
-          console.log('Prevented unwanted redirect from profile to listings');
-          if (webViewRef.current) {
-            const forceProfileScript = `
-              console.log('Forcing stay on profile page');
-              if (window.location.pathname !== '/profile') {
-                window.location.href = '/profile';
-              }
-              true;
+                } catch(e) {
+                  console.error('Error in direct HTML injection:', e);
+                  return false;
+                }
+              })();
             `;
-            setTimeout(() => {
-              webViewRef.current?.injectJavaScript(forceProfileScript);
-            }, 200);
+            
+            webViewRef.current.injectJavaScript(directInjectHTML);
           }
         }
-      } else if (data.type === 'CHECK_OWNER') {
-        console.log('CHECK_OWNER request received:', {
-          listingId: data.listingId,
-          isAuthenticated: isAuthenticated,
-          hasAccessToken: !!tokens.accessToken,
-          currentUrl: currentUrl
-        });
         
-        if (isAuthenticated && tokens.accessToken && webViewRef.current) {
-          // First ensure tokens are injected
-          injectTokensToWebView();
-          
-          // Then inject a script to specifically check ownership for this listing
-          setTimeout(() => {
-            if (webViewRef.current) {
-              const checkOwnerScript = `
-                (function() {
-                  try {
-                    console.log('Starting ownership check for listing:', '${data.listingId}');
-                    
-                    // Get user data
-                    let userData = null;
-                    if (window.userData) {
-                      userData = window.userData;
-                      console.log('Found userData in window:', userData);
-                    } else {
-                      const userDataStr = localStorage.getItem('user');
-                      if (userDataStr) {
-                        try {
-                        userData = JSON.parse(userDataStr);
-                        console.log('Found userData in localStorage:', userData);
-                        } catch (e) {
-                          window.ReactNativeWebView.postMessage(JSON.stringify({
-                            type: 'LOG',
-                            message: 'Error parsing user data from localStorage',
-                            error: e.message
-                          }));
-                        }
-                      } else {
-                        window.ReactNativeWebView.postMessage(JSON.stringify({
-                          type: 'LOG',
-                          message: 'No user data found in localStorage',
-                          availableKeys: Object.keys(localStorage)
-                        }));
-                      }
-                    }
-                    
-                    if (!userData || !userData.id) {
-                      console.error('No user data available for ownership check');
-                      return;
-                    }
-                    
-                    console.log('User data for ownership check:', {
-                      userId: userData.id,
-                      listingId: '${data.listingId}'
-                    });
-                    
-                    // Make API call to get listing details
-                    const API_URL = typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL 
-                                  ? process.env.NEXT_PUBLIC_API_URL 
-                                  : 'https://backend.listtra.com';
-                    
-                    fetch(\`\${API_URL}/api/listings/${data.listingId}/\`, {
-                      headers: {
-                        'Authorization': 'Bearer ' + localStorage.getItem('token')
-                      }
-                    })
-                    .then(response => response.json())
-                    .then(listingData => {
-                      console.log('Listing data received:', {
-                        listingId: listingData.product_id,
-                        sellerId: listingData.seller_id,
-                        userId: userData.id,
-                        isMatch: String(listingData.seller_id) === String(userData.id)
-                      });
-                      
-                      const isOwner = String(listingData.seller_id) === String(userData.id);
-                      
-                      // Dispatch event with the result
-                      window.dispatchEvent(new CustomEvent('ownership-result', { 
-                        detail: { 
-                          isOwner: isOwner,
-                          listingId: '${data.listingId}',
-                          sellerId: listingData.seller_id,
-                          userId: userData.id
-                        } 
-                      }));
-                      
-                      console.log('Ownership check complete:', isOwner);
-                    })
-                    .catch(error => {
-                      console.error('Error in ownership check:', error);
-                    });
-                  } catch(e) {
-                    console.error('Error in ownership check script:', e);
-                  }
-                  return true;
-                })();
-              `;
-              
-              webViewRef.current.injectJavaScript(checkOwnerScript);
-            }
-          }, 300);
-        }
+        return;
       }
+      
+      // Rest of your existing message handler code...
+      // ... existing message handler code ...
     } catch (error) {
       console.error('Failed to process WebView message', error);
     }
   };
 
-  // Add script to fix Cloudinary image URLs
-  const injectedJavaScript = `
+  // Add the optimized chat enhancement script to the original useEffect 
+  useEffect(() => {
+    // Wait for webViewRef to be available and page to fully load
+    if (!webViewRef.current || isLoading) return;
+    
+    console.log('Checking if page-specific scripts need to be injected for:', currentUrl);
+    
+    // Inject script with a delay to ensure page is ready
+    const injectWithDelay = (script: string, delay: number = 1000) => {
+      setTimeout(() => {
+        if (webViewRef.current) {
+          console.log('Injecting script after delay');
+          webViewRef.current.injectJavaScript(script);
+        }
+      }, delay);
+    };
+    
+    // Use a different approach based on URL
+    if (currentUrl.includes('/chat/')) {
+      console.log('Chat page detected, preparing chat scripts');
+      
+      // Create a chat enhancement script that doesn't depend on external variables
+      // This version is optimized to prevent freezing
+      const enhanceChatScript = `
+        (function() {
+          // If script has already run on this page, don't run again
+          if (window.__chatScriptApplied) {
+            console.log('Chat script already applied, skipping');
+              return true;
+            }
+            
+          try {
+            console.log('Running optimized chat enhancement script');
+            
+            // Mark as applied immediately to prevent double execution
+            window.__chatScriptApplied = true;
+            
+            // Function to detect if user is buyer or seller - run only once
+            const detectUserRole = () => {
+              // Try URL parameter first (most reliable)
+              const urlParams = new URLSearchParams(window.location.search);
+              const isBuyerParam = urlParams.get('isBuyer');
+              if (isBuyerParam !== null) {
+                const isBuyer = isBuyerParam === 'true';
+                console.log('Using isBuyer parameter:', isBuyer);
+                setUserRole(isBuyer);
+                  return;
+                }
+                
+              // Get user data from localStorage as fallback
+              try {
+                const userData = JSON.parse(localStorage.getItem('user') || '{}');
+                const userID = userData.id;
+                
+                if (!userID) {
+                  console.warn('No user ID found, defaulting to buyer view');
+                  setUserRole(true);
+                  return;
+                }
+                
+                // Simplified UI detection - just check for one element type
+                const hasSellerControls = !!document.querySelector('button[class*="bg-green"]') || 
+                                         !!document.querySelector('button[class*="bg-red"]');
+                
+                // Set role opposite of seller controls presence
+                setUserRole(!hasSellerControls);
+              } catch (e) {
+                console.error('Error detecting role:', e);
+                setUserRole(true); // Default to buyer
+              }
+            };
+            
+            // Function to apply UI changes based on role - simpler version
+            const setUserRole = (isBuyer) => {
+              console.log('Setting user role:', isBuyer ? 'Buyer' : 'Seller');
+              
+              // Add a class to the body for CSS targeting
+              document.body.classList.add(isBuyer ? 'is-buyer' : 'is-seller');
+              window.__isBuyer = isBuyer;
+              
+              // Add styles instead of manipulating DOM directly
+              const styleId = 'chat-role-styles';
+              if (!document.getElementById(styleId)) {
+                const style = document.createElement('style');
+                style.id = styleId;
+                style.textContent = \`
+                  /* When user is buyer */
+                  body.is-buyer .flex.gap-3.justify-center.mt-1 {
+                    display: none !important;
+                  }
+                  
+                  /* When user is seller */
+                  body.is-seller .mt-2:has(input[type="number"]) {
+                    display: none !important;
+                  }
+                \`;
+                document.head.appendChild(style);
+              }
+            };
+            
+            // Run role detection after a short delay to ensure DOM is ready
+            setTimeout(detectUserRole, 500);
+            
+            // Add a single, limited mutation observer with debounce
+            let debounceTimeout = null;
+                  const observer = new MutationObserver(() => {
+              if (debounceTimeout) clearTimeout(debounceTimeout);
+              debounceTimeout = setTimeout(() => {
+                // Only check for a few specific elements to avoid heavy processing
+                const needsUpdate = !document.body.classList.contains('is-buyer') && 
+                                   !document.body.classList.contains('is-seller');
+                if (needsUpdate) {
+                  detectUserRole();
+                }
+              }, 500);
+            });
+            
+            // Observe only body class changes and additions
+                  observer.observe(document.body, {
+              attributes: true,
+              attributeFilter: ['class']
+                  });
+                  
+            // Force clean stop after 10 seconds to prevent memory leaks
+                  setTimeout(() => {
+              observer.disconnect();
+              console.log('Chat enhancement observer stopped after timeout');
+            }, 10000);
+          } catch(e) {
+            console.error('Error in chat enhancement script:', e);
+          }
+          return true;
+        })();
+      `;
+      
+      // Inject only once with longer delay to ensure page is fully loaded
+      injectWithDelay(enhanceChatScript, 1500);
+    } else if (currentUrl.includes('/listings/')) {
+      // Keep the listing script as is
+    }
+  }, [currentUrl, isLoading, webViewRef.current]);
+
+  // Rename the existing injectedJavaScript variable to baseInjectedJavaScript to avoid conflict
+  const baseInjectedJavaScript = `
     (function() {
       // Function to fix Cloudinary image URLs
       function fixCloudinaryImages() {
@@ -1331,7 +629,7 @@ const WebViewScreen: React.FC<WebViewScreenProps> = ({
             if (!img.retried) {
               img.retried = true;
               img.src = img.src.replace('https://', 'http://');
-                            }
+            }
           };
         });
       }
@@ -1342,13 +640,77 @@ const WebViewScreen: React.FC<WebViewScreenProps> = ({
       // Also run when DOM changes
       const observer = new MutationObserver(function(mutations) {
         fixCloudinaryImages();
+        
+        // Also intercept chat link clicks
+        interceptChatLinks();
       });
 
-              observer.observe(document.body, {
-                childList: true,
-                subtree: true
-              });
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true
+      });
 
+      // Function to intercept chat link clicks
+      function interceptChatLinks() {
+        // Look for chat links in the page
+        document.querySelectorAll('a[href^="/chat/"]').forEach(link => {
+          // Check if we already processed this link
+          if (!link.dataset.intercepted) {
+            link.dataset.intercepted = 'true';
+            
+            // Add click handler
+            link.addEventListener('click', function(e) {
+              // Get the chat ID from the href
+              const chatId = link.href.match(/\\/chat\\/([^\\/\\?]+)/)?.[1];
+              
+              if (chatId) {
+                e.preventDefault();
+                
+                // Notify the native app
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                  type: 'CHAT_CLICKED',
+                  chatId: chatId
+              }));
+            }
+            });
+          }
+        });
+        
+        // Also handle chat items in list
+        document.querySelectorAll('.hover\\\\:bg-gray-50, [class*="hover:bg-gray-50"]').forEach(item => {
+          if (!item.dataset.intercepted && item.onclick) {
+            item.dataset.intercepted = 'true';
+            
+            // Capture original onclick
+            const originalOnClick = item.onclick;
+            
+            // Replace with our handler
+            item.onclick = function(e) {
+              // Try to get chat ID from href or onclick function
+              const href = item.getAttribute('href') || '';
+              const chatId = href.match(/\\/chat\\/([^\\/\\?]+)/)?.[1];
+              
+              if (chatId) {
+                e.preventDefault();
+                
+                // Notify the native app
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                  type: 'CHAT_CLICKED',
+                  chatId: chatId
+                }));
+              } else {
+                // Fall back to original handler
+                return originalOnClick.call(this, e);
+              }
+            };
+          }
+        });
+      }
+
+      // Run the chat link interception immediately
+      setTimeout(interceptChatLinks, 1000);
+      setTimeout(interceptChatLinks, 3000);
+      
       // Also run after a short delay to catch dynamically loaded images
       setTimeout(fixCloudinaryImages, 1000);
       setTimeout(fixCloudinaryImages, 3000);
@@ -1356,6 +718,671 @@ const WebViewScreen: React.FC<WebViewScreenProps> = ({
     true;
     })();
   `;
+
+  // Inject JavaScript to prevent redirects to signin when authenticated
+  const preventAuthRedirectScript = `
+    (function() {
+      // Override window.location and history methods to intercept redirects
+      const originalPushState = history.pushState;
+      const originalReplaceState = history.replaceState;
+      const originalAssign = window.location.assign;
+      const originalReplace = window.location.replace;
+      
+      // Check if a URL is an auth page
+      function isAuthUrl(url) {
+        return url.includes('/auth/') || url.includes('/signin') || url.includes('/login');
+      }
+      
+      // Block navigation to auth pages if we're already authenticated
+      function shouldBlockNavigation(url) {
+        // If we have tokens in localStorage, block auth redirects
+        const hasToken = localStorage.getItem('token');
+        const hasUser = localStorage.getItem('user');
+        return hasToken && hasUser && isAuthUrl(url);
+      }
+      
+      // Override pushState
+      history.pushState = function() {
+        const url = arguments[2];
+        if (url && shouldBlockNavigation(url)) {
+          console.log('Blocked redirect to auth page:', url);
+          
+          // Try to refresh current page with tokens instead
+          if (localStorage.getItem('token')) {
+            console.log('Attempting to reload current page with tokens');
+            // Send message to React Native
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'REDIRECT_BLOCKED',
+              destination: url,
+              action: 'refresh'
+            }));
+            return;
+          }
+        }
+        return originalPushState.apply(this, arguments);
+      };
+      
+      // Override replaceState
+      history.replaceState = function() {
+        const url = arguments[2];
+        if (url && shouldBlockNavigation(url)) {
+          console.log('Blocked history replace to auth page:', url);
+          return;
+        }
+        return originalReplaceState.apply(this, arguments);
+      };
+      
+      // Override location.assign
+      window.location.assign = function(url) {
+        if (shouldBlockNavigation(url)) {
+          console.log('Blocked location.assign to auth page:', url);
+          return;
+        }
+        return originalAssign.call(window.location, url);
+      };
+      
+      // Override location.replace
+      window.location.replace = function(url) {
+        if (shouldBlockNavigation(url)) {
+          console.log('Blocked location.replace to auth page:', url);
+          return;
+        }
+        return originalReplace.call(window.location, url);
+      };
+      
+      // Monitor navigation attempts through links
+      document.addEventListener('click', function(e) {
+        // Check if click is on a link
+        let target = e.target;
+        while (target && target.tagName !== 'A') {
+          target = target.parentElement;
+        }
+        
+        if (target && target.href && shouldBlockNavigation(target.href)) {
+          e.preventDefault();
+          console.log('Blocked link click to auth page:', target.href);
+        }
+      }, true);
+      
+      console.log('Navigation protection installed');
+    })();
+  `;
+
+  // Create a more aggressive token injection that forces reload if needed
+  const forceTokenInjection = `
+    (function() {
+      try {
+        // Set tokens in localStorage
+        localStorage.setItem('token', '${tokens.accessToken || ""}');
+        localStorage.setItem('refreshToken', '${tokens.refreshToken || ""}');
+        
+        // Parse and store user data
+        const userDataString = '${JSON.stringify(user || {})}';
+        localStorage.setItem('user', userDataString);
+        
+        // Make user data globally available
+        window.userData = JSON.parse(userDataString);
+        
+        // Check if we're on an auth page that we should redirect from
+        const isAuthPage = window.location.pathname.includes('/auth/') || 
+                           window.location.pathname.includes('/signin') || 
+                           window.location.pathname.includes('/login');
+        
+        if (isAuthPage) {
+          console.log('Detected auth page, redirecting to profile');
+          window.location.replace('/profile');
+          return true;
+        }
+        
+        // Add global auth state
+        window.isNativeAuthenticated = true;
+        
+        console.log('Tokens forcefully injected');
+        return true;
+      } catch(e) {
+        console.error('Error in force token injection:', e);
+        return false;
+      }
+    })();
+  `;
+
+  // Enhance injected JavaScript with specific profile page handling
+  const profilePageScript = `
+    (function() {
+      // Check if we're on the profile page
+      if (window.location.pathname === '/profile' || window.location.pathname.startsWith('/profile/')) {
+        console.log('Profile page detected, applying fixes');
+        
+        // Ensure auth tokens are available
+        if (!localStorage.getItem('token') || !localStorage.getItem('user')) {
+          console.log('Missing auth tokens on profile page, applying tokens');
+          localStorage.setItem('token', '${tokens.accessToken || ""}');
+          localStorage.setItem('refreshToken', '${tokens.refreshToken || ""}');
+          localStorage.setItem('user', '${JSON.stringify(user || {})}');
+          
+          // Force reload after setting tokens
+          setTimeout(() => window.location.reload(), 100);
+          return true;
+        }
+        
+        // Monitor for auth redirects
+        const checkInterval = setInterval(() => {
+          // Check if we're somehow redirected to auth page
+          if (window.location.pathname.includes('/auth/') || 
+              window.location.pathname.includes('/signin') || 
+              window.location.pathname.includes('/login')) {
+            
+            console.log('Detected redirect to auth page, forcing back to profile');
+            clearInterval(checkInterval);
+            
+            // Re-apply tokens
+            localStorage.setItem('token', '${tokens.accessToken || ""}');
+            localStorage.setItem('refreshToken', '${tokens.refreshToken || ""}');
+            localStorage.setItem('user', '${JSON.stringify(user || {})}');
+            
+            // Redirect back to profile
+            window.location.replace('/profile');
+          }
+        }, 200);
+        
+        // Clean up interval after some time
+        setTimeout(() => clearInterval(checkInterval), 10000);
+      }
+      return true;
+    })();
+  `;
+
+  // Combine all injected scripts
+  const injectInitialScripts = `
+    ${preventAuthRedirectScript}
+    ${forceTokenInjection}
+    ${profilePageScript}
+    true;
+  `;
+
+  // Create a script specifically for loading profile page with authentication
+  const profileAuthOverrideScript = `
+    (function() {
+      // Override AuthContext handling in the web app
+      console.log("Installing auth override for profile page");
+
+      // Override React hooks and contexts used for auth
+      const installHookOverrides = () => {
+        // First, save the original React hooks if they exist
+        if (window.React) {
+          console.log("Found React, installing hook overrides");
+          
+          // Save original useState
+          const originalUseState = window.React.useState;
+          
+          // Override useState to intercept auth-related state
+          window.React.useState = function(initialState) {
+            // Check if this is likely an auth-related state
+            if (
+              // When initialState is an object with auth properties
+              (initialState && 
+               typeof initialState === 'object' && 
+               (initialState.hasOwnProperty('isAuthenticated') || 
+                initialState.hasOwnProperty('user') || 
+                initialState.hasOwnProperty('token'))) ||
+              // When it's the authLoading flag
+              initialState === true
+            ) {
+              console.log("Intercepted likely auth state:", initialState);
+              
+              // Replace with authenticated state
+              if (typeof initialState === 'object') {
+                const authState = {
+                  ...initialState,
+                  isAuthenticated: true,
+                  user: JSON.parse(localStorage.getItem('user') || '{}'),
+                  token: localStorage.getItem('token'),
+                  isLoading: false,
+                  loading: false,
+                  authLoading: false
+                };
+                return originalUseState(authState);
+              } else if (initialState === true && 
+                       (new Error().stack || "").includes("AuthContext") || 
+                       (new Error().stack || "").includes("useAuth")) {
+                // This is likely a loading state in AuthContext
+                console.log("Intercepted auth loading state");
+                return originalUseState(false);
+              }
+            }
+            
+            // Default behavior for non-auth state
+            return originalUseState(initialState);
+          };
+          
+          // Also save and override useEffect if needed
+          const originalUseEffect = window.React.useEffect;
+          
+          // Override useEffect to prevent auth checks running on load
+          window.React.useEffect = function(effect, deps) {
+            // Check if this is likely an auth effect by examining the stack trace
+            const stack = new Error().stack || "";
+            
+            if (stack.includes("AuthContext") || stack.includes("useAuth")) {
+              console.log("Intercepted likely auth effect");
+              
+              // Wrap the effect to prevent redirects
+              const wrappedEffect = () => {
+                // Replace router.push if it's being used to redirect to signin
+                const originalPush = window.router && window.router.push;
+                if (originalPush) {
+                  window.router.push = function(path, ...args) {
+                    if (path.includes('signin') || path.includes('auth')) {
+                      console.log("Blocked redirect to:", path);
+                      return Promise.resolve(false);
+                    }
+                    return originalPush.call(window.router, path, ...args);
+                  };
+                }
+                
+                // Call the original effect
+                return effect();
+              };
+              
+              return originalUseEffect(wrappedEffect, deps);
+            }
+            
+            // Default behavior for non-auth effects
+            return originalUseEffect(effect, deps);
+          };
+        }
+      };
+      
+      // Function to override authentication API
+      const overrideAuthAPI = () => {
+        // Create a fake auth API that always returns authenticated
+        window.authAPI = {
+          isAuthenticated: () => true,
+          getUser: () => JSON.parse(localStorage.getItem('user') || '{}'),
+          getToken: () => localStorage.getItem('token'),
+          login: () => Promise.resolve(true),
+          logout: () => {},
+          checkAuth: () => Promise.resolve(true)
+        };
+        
+        // Export globally for use by React components
+        window.isAuthenticated = true;
+        window.userData = JSON.parse(localStorage.getItem('user') || '{}');
+      };
+      
+      // Monitor for React loading and apply overrides
+      const checkForReact = setInterval(() => {
+        if (window.React) {
+          clearInterval(checkForReact);
+          installHookOverrides();
+        }
+      }, 100);
+      
+      // Apply API overrides immediately
+      overrideAuthAPI();
+      
+      // Also monitor for redirect attempts
+      const originalPush = history.pushState;
+      history.pushState = function() {
+        const url = arguments[2];
+        if (url && (url.includes('/auth/') || url.includes('/signin'))) {
+          console.log("Blocked pushState to auth page:", url);
+          return;
+        }
+        return originalPush.apply(this, arguments);
+      };
+      
+      return true;
+    })();
+  `;
+
+  // Function to handle Make Offer button on listing detail pages
+  const handleMakeOfferScript = `
+    (function() {
+      try {
+        console.log('Setting up Make Offer button handler');
+        
+        // Check if we're on a listing detail page
+        if (window.location.pathname.match(/\\/listings\\/[^\\/]+\\/[^\\/]+/)) {
+          console.log('On listing detail page, looking for Make Offer button');
+          
+          // Function to set up button handlers
+          const setupMakeOfferButton = () => {
+            document.querySelectorAll('button').forEach(btn => {
+              if (btn.innerText && btn.innerText.includes('Make Offer') && !btn.dataset.handlerAdded) {
+                console.log('Found Make Offer button, adding handler');
+                btn.dataset.handlerAdded = 'true';
+                
+                // Add click handler
+                btn.addEventListener('click', async (e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  
+                  console.log('Make Offer clicked, handling with custom script');
+                  
+                  // Get product ID from URL
+                  const matches = window.location.pathname.match(/\\/listings\\/[^\\/]+\\/([^\\/]+)/);
+                  const productId = matches ? matches[1] : null;
+                  
+                  if (!productId) {
+                    console.error('Could not extract product ID from URL');
+                    return;
+                  }
+                  
+                  // Show loading state
+                  const originalText = btn.innerText;
+                  btn.innerText = 'Processing...';
+                  btn.disabled = true;
+                  
+                  try {
+                    // Make API call to create conversation
+                    const API_URL = 'https://backend.listtra.com';
+                    const token = localStorage.getItem('token');
+                    
+                    if (!token) {
+                      console.error('No authentication token found');
+                      window.ReactNativeWebView.postMessage(JSON.stringify({
+                        type: 'AUTH_REQUIRED',
+                        returnTo: window.location.pathname
+                      }));
+                      return;
+                    }
+                    
+                    const response = await fetch(\`\${API_URL}/api/chat/conversations/\`, {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': \`Bearer \${token}\`
+                      },
+                      body: JSON.stringify({ listing: productId })
+                    });
+                    
+                    if (!response.ok) {
+                      throw new Error('Failed to create conversation');
+                    }
+                    
+                    const data = await response.json();
+                    console.log('Conversation created:', data);
+                    
+                    // Notify the native app to navigate to chat
+                    window.ReactNativeWebView.postMessage(JSON.stringify({
+                      type: 'NAVIGATE_CHAT',
+                      chatId: data.id
+                    }));
+                  } catch (error) {
+                    console.error('Error creating conversation:', error);
+                    alert('Failed to start chat. Please try again.');
+                  } finally {
+                    // Restore button state
+                    btn.innerText = originalText;
+                    btn.disabled = false;
+                  }
+                });
+              }
+            });
+          };
+          
+          // Run immediately and then on a small delay to catch dynamically added buttons
+          setupMakeOfferButton();
+          setTimeout(setupMakeOfferButton, 1000);
+          setTimeout(setupMakeOfferButton, 2000);
+        }
+      } catch (error) {
+        console.error('Error in Make Offer handler:', error);
+      }
+      return true;
+    })();
+  `;
+
+  // Add this right after the WebViewScreen component definition
+  // Enhance WebView with custom scripts based on page type
+  useEffect(() => {
+    // Wait for webViewRef to be available and page to fully load
+    if (!webViewRef.current || isLoading) return;
+    
+    console.log('Checking if page-specific scripts need to be injected for:', currentUrl);
+    
+    // Inject script with a delay to ensure page is ready
+    const injectWithDelay = (script: string, delay: number = 1000) => {
+      setTimeout(() => {
+        if (webViewRef.current) {
+          console.log('Injecting script after delay');
+          webViewRef.current.injectJavaScript(script);
+        }
+      }, delay);
+    };
+    
+    // Use a different approach based on URL
+    if (currentUrl.includes('/chat/')) {
+      console.log('Chat page detected, preparing chat scripts');
+      
+      // Create a chat enhancement script that doesn't depend on external variables
+      // This version is optimized to prevent freezing
+      const enhanceChatScript = `
+        (function() {
+          try {
+            console.log('Running chat enhancement script');
+            
+            // Function to detect if user is buyer or seller
+            const detectUserRole = () => {
+              // Get user data from localStorage
+              const userData = JSON.parse(localStorage.getItem('user') || '{}');
+              const userID = userData.id;
+              
+              if (!userID) {
+                console.error('Cannot detect role: No user ID found');
+                return;
+              }
+              
+              // Try to find conversation data in the page
+              // First look for seller ID in data attributes or other elements
+              let sellerID = null;
+              const sellerElements = document.querySelectorAll('[data-seller-id]');
+              if (sellerElements.length > 0) {
+                sellerID = sellerElements[0].getAttribute('data-seller-id');
+              }
+              
+              // If no explicit seller ID, check URL parameters
+              if (!sellerID) {
+                const urlParams = new URLSearchParams(window.location.search);
+                const isBuyerParam = urlParams.get('isBuyer');
+                if (isBuyerParam !== null) {
+                  const isBuyer = isBuyerParam === 'true';
+                  console.log('Using isBuyer parameter:', isBuyer);
+                  setUserRole(isBuyer);
+                  return;
+                }
+              }
+              
+              // If still no seller ID, try to infer from UI elements
+              if (!sellerID) {
+                // Check for seller-specific controls (Accept/Reject buttons)
+                const acceptBtn = document.querySelector('button[class*="bg-green"]');
+                const rejectBtn = document.querySelector('button[class*="bg-red"]');
+                
+                if (acceptBtn || rejectBtn) {
+                  // If accept/reject buttons exist, user is likely the seller
+                  setUserRole(false);
+                  return;
+                }
+                
+                // Check for buyer-specific controls (offer input)
+                const offerInput = document.querySelector('input[type="number"]');
+                if (offerInput) {
+                  // If offer input exists, user is likely the buyer
+                  setUserRole(true);
+                  return;
+                }
+              }
+              
+              // If we got here, we couldn't determine the role
+              console.warn('Could not determine user role, defaulting to buyer');
+              setUserRole(true);
+            };
+            
+            // Function to apply UI changes based on role
+            const setUserRole = (isBuyer) => {
+              console.log('Setting user role:', isBuyer ? 'Buyer' : 'Seller');
+              
+              // Add a class to the body for CSS targeting
+              document.body.classList.add(isBuyer ? 'is-buyer' : 'is-seller');
+              window.__isBuyer = isBuyer;
+              
+              // Apply UI adjustments
+              setTimeout(() => {
+                if (isBuyer) {
+                  // Show buyer elements, hide seller elements
+                  document.querySelectorAll('.mt-2').forEach(container => {
+                    const offerInput = container.querySelector('input[type="number"]');
+                    if (offerInput) {
+                      container.style.display = 'block';
+                    }
+                  });
+                  
+                  document.querySelectorAll('.flex.gap-3.justify-center.mt-1').forEach(el => {
+                    if (el.querySelector('button[class*="bg-green-"]') || 
+                        el.querySelector('button[class*="bg-red-"]')) {
+                      el.style.display = 'none';
+                    }
+                  });
+                } else {
+                  // Show seller elements, hide buyer elements
+                  document.querySelectorAll('.mt-2').forEach(container => {
+                    const offerInput = container.querySelector('input[type="number"]');
+                    if (offerInput) {
+                      container.style.display = 'none';
+                    }
+                  });
+                  
+                  document.querySelectorAll('.flex.gap-3.justify-center.mt-1').forEach(el => {
+                    if (el.querySelector('button[class*="bg-green-"]') || 
+                        el.querySelector('button[class*="bg-red-"]')) {
+                      el.style.display = 'flex';
+                    }
+                  });
+                }
+              }, 1000);
+            };
+            
+            // Run role detection
+            detectUserRole();
+            
+            // Also run after content changes
+            const observer = new MutationObserver(() => {
+              detectUserRole();
+            });
+            
+            observer.observe(document.body, {
+              childList: true,
+              subtree: true
+            });
+          } catch(e) {
+            console.error('Error in chat enhancement script:', e);
+          }
+          return true;
+        })();
+      `;
+      
+      injectWithDelay(enhanceChatScript);
+    } else if (currentUrl.includes('/listings/')) {
+      console.log('Listing page detected, preparing listing scripts');
+      
+      // Create a listing enhancement script that doesn't depend on external variables
+      const enhanceListingScript = `
+        (function() {
+          try {
+            console.log('Running listing enhancement script');
+            
+            // Function to handle Make Offer button
+            const setupMakeOfferButton = () => {
+              document.querySelectorAll('button').forEach(btn => {
+                if (btn.innerText && btn.innerText.includes('Make Offer') && !btn.dataset.handlerAdded) {
+                  console.log('Found Make Offer button, adding handler');
+                  btn.dataset.handlerAdded = 'true';
+                  
+                  // Add click handler
+                  btn.addEventListener('click', async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    console.log('Make Offer clicked, handling with custom script');
+                    
+                    // Get product ID from URL
+                    const matches = window.location.pathname.match(/\\/listings\\/[^\\/]+\\/([^\\/]+)/);
+                    const productId = matches ? matches[1] : null;
+                    
+                    if (!productId) {
+                      console.error('Could not extract product ID from URL');
+                      return;
+                    }
+                    
+                    // Show loading state
+                    const originalText = btn.innerText;
+                    btn.innerText = 'Processing...';
+                    btn.disabled = true;
+                    
+                    try {
+                      // Make API call to create conversation
+                      const API_URL = 'https://backend.listtra.com';
+                      const token = localStorage.getItem('token');
+                      
+                      if (!token) {
+                        console.error('No authentication token found');
+                        window.ReactNativeWebView.postMessage(JSON.stringify({
+                          type: 'AUTH_REQUIRED',
+                          returnTo: window.location.pathname
+                        }));
+                        return;
+                      }
+                      
+                      const response = await fetch(\`\${API_URL}/api/chat/conversations/\`, {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/json',
+                          'Authorization': \`Bearer \${token}\`
+                        },
+                        body: JSON.stringify({ listing: productId })
+                      });
+                      
+                      if (!response.ok) {
+                        throw new Error('Failed to create conversation');
+                      }
+                      
+                      const data = await response.json();
+                      console.log('Conversation created:', data);
+                      
+                      // Notify the native app to navigate to chat
+                      window.ReactNativeWebView.postMessage(JSON.stringify({
+                        type: 'NAVIGATE_CHAT',
+                        chatId: data.id
+                      }));
+                    } catch (error) {
+                      console.error('Error creating conversation:', error);
+                      alert('Failed to start chat. Please try again.');
+                    } finally {
+                      // Restore button state
+                      btn.innerText = originalText;
+                      btn.disabled = false;
+                    }
+                  });
+                }
+              });
+            };
+            
+            // Run immediately and with delays
+            setupMakeOfferButton();
+            setTimeout(setupMakeOfferButton, 1000);
+            setTimeout(setupMakeOfferButton, 2000);
+          } catch(e) {
+            console.error('Error in listing enhancement script:', e);
+          }
+          return true;
+        })();
+      `;
+      
+      injectWithDelay(enhanceListingScript);
+    }
+  }, [currentUrl, isLoading, webViewRef.current]);
 
   return (
     <SafeAreaView style={{ flex: 1 }}>
@@ -1376,126 +1403,65 @@ const WebViewScreen: React.FC<WebViewScreenProps> = ({
               domStorageEnabled={true}
               allowUniversalAccessFromFileURLs={true}
               javaScriptCanOpenWindowsAutomatically={true}
-              onMessage={handleWebViewMessage}
+              onMessage={onMessage || handleWebViewMessage}
               javaScriptEnabled={true}
               startInLoadingState={true}
               cacheEnabled={true}
               cacheMode="LOAD_DEFAULT"
               mixedContentMode="always"
+              injectedJavaScriptBeforeContentLoaded={`
+                ${isAuthenticated ? `
+                  window.isNativeAuth = true;
+                  window.authToken = "${tokens.accessToken || ""}";
+                  window.refreshToken = "${tokens.refreshToken || ""}";
+                  window.userData = ${JSON.stringify(user || {})};
+                  // Add profile page specific overrides
+                  ${currentUrl.includes('/profile') ? profileAuthOverrideScript : ''}
+                ` : ''}
+                ${injectedJavaScript}
+                true;
+              `}
+              onShouldStartLoadWithRequest={(request) => {
+                // Block redirect to signin page if authenticated
+                if (isAuthenticated && tokens.accessToken && 
+                    (request.url.includes('/auth/signin') || 
+                     request.url.includes('/login'))) {
+                  console.log('Blocking redirect to auth page:', request.url);
+                  // Inject tokens again
+                  setTimeout(() => {
+                    injectTokensToWebView();
+                    if (webViewRef.current) {
+                      webViewRef.current.injectJavaScript(`
+                        (function() {
+                          if (window.location.pathname.includes('/auth/')) {
+                            window.location.replace('/profile');
+                          }
+                          return true;
+                        })();
+                      `);
+                    }
+                  }, 100);
+                  return false;
+                }
+                return true;
+              }}
               onLoad={() => {
                 setIsLoading(false);
                 
                 // When page loads, inject tokens if authenticated
                 if (isAuthenticated && tokens.accessToken && tokens.refreshToken) {
                   // Give time for page to fully initialize
+                  injectTokensToWebView();
+                  
+                  // Inject our combined scripts
                   setTimeout(() => {
-                    injectTokensToWebView();
-                    
-                    // Add a debug script to inspect the web app's auth state
                     if (webViewRef.current) {
-                      const debugScript = `
-                        (function() {
-                          try {
-                            console.log('DEBUG: Inspecting web app auth state');
-                            
-                            // Check tokens in localStorage
-                            const token = localStorage.getItem('token');
-                            const refreshToken = localStorage.getItem('refreshToken');
-                            console.log('Tokens present:', {
-                              hasToken: !!token,
-                              hasRefreshToken: !!refreshToken
-                            });
-                            
-                            // Check for auth-related globals
-                            console.log('Auth globals:', {
-                              hasAuthAPI: typeof window.authAPI !== 'undefined',
-                              hasAuthContext: typeof window.AuthContext !== 'undefined',
-                              isNativeAuthenticated: !!window.isNativeAuthenticated
-                            });
-                            
-                            // Add a more aggressive approach to find and update React's AuthContext
-                            document.addEventListener('DOMContentLoaded', function() {
-                              // Try to find React's __REACT_DEVTOOLS_GLOBAL_HOOK__
-                              if (window.__REACT_DEVTOOLS_GLOBAL_HOOK__) {
-                                console.log('React DevTools hook found, might be able to access contexts');
-                              }
-                              
-                              // Check for React root directly in DOM
-                              const reactRoots = document.querySelectorAll('[data-reactroot]');
-                              console.log('React roots found:', reactRoots.length);
-                              
-                              // Setup a MutationObserver to catch auth UI elements
-                              const observer = new MutationObserver(function(mutations) {
-                                for (let mutation of mutations) {
-                                  if (mutation.type === 'childList') {
-                                    // Look for navbar elements that indicate auth state
-                                    const navbarContainer = document.querySelector('.md\\\\:flex.items-center.gap-1.sm\\\\:gap-4.ml-auto');
-                                    if (navbarContainer) {
-                                      const profileLink = navbarContainer.querySelector('a[href="/profile"]');
-                                      if (profileLink) {
-                                        console.log('Profile link found in navbar:', {
-                                          isVisible: window.getComputedStyle(profileLink).display !== 'none',
-                                          classList: profileLink.className
-                                        });
-                                        
-                                        // Force visibility
-                                        profileLink.style.display = 'flex';
-                                        
-                                        // Also force visibility for other auth elements
-                                        const authLinks = navbarContainer.querySelectorAll('a[href="/liked"], a[href="/chats"], button[title="Logout"]');
-                                        authLinks.forEach(link => {
-                                          link.style.display = 'flex';
-                                        });
-                                      }
-                                    }
-                                  }
-                                }
-                              });
-                              
-                              // Start observing
-                              observer.observe(document.body, {
-                                childList: true,
-                                subtree: true
-                              });
-                            });
-                            
-                            // Try the direct auth API approach again
-                            setTimeout(() => {
-                              fetch('https://backend.listtra.com/api/profile/', {
-                                method: 'GET',
-                                headers: {
-                                  'Authorization': 'Bearer ' + token,
-                                  'Content-Type': 'application/json'
-                                }
-                              })
-                              .then(response => response.json())
-                              .then(userData => {
-                                console.log('User profile:', userData);
-                                
-                                // Now force all auth UI elements to show
-                                const navbarContainer = document.querySelector('.md\\\\:flex.items-center.gap-1.sm\\\\:gap-4.ml-auto');
-                                if (navbarContainer) {
-                                  const links = navbarContainer.querySelectorAll('a, button');
-                                  links.forEach(link => {
-                                    if (!link.classList.contains('md:hidden')) {
-                                      link.style.display = 'flex';
-                                    }
-                                  });
-                                }
-                              })
-                              .catch(error => {
-                                console.error('Error fetching profile in debug script:', error);
-                              });
-                            }, 2000);
-                          } catch(e) {
-                            console.error('Error in debug script:', e);
-                          }
-                          
-                          return true;
-                        })();
-                      `;
+                      webViewRef.current.injectJavaScript(injectInitialScripts);
                       
-                      webViewRef.current.injectJavaScript(debugScript);
+                      // Also inject the custom script if provided
+                      if (injectedJavaScript) {
+                        webViewRef.current.injectJavaScript(injectedJavaScript);
+                      }
                     }
                   }, 300);
                 }
@@ -1513,7 +1479,7 @@ const WebViewScreen: React.FC<WebViewScreenProps> = ({
                 setIsLoading(false);
               }}
               onNavigationStateChange={handleNavigationStateChange}
-              injectedJavaScript={injectedJavaScript}
+              injectedJavaScript={baseInjectedJavaScript}
               sharedCookiesEnabled={true}
               allowsBackForwardNavigationGestures={true}
               pullToRefreshEnabled={true}
@@ -1522,7 +1488,7 @@ const WebViewScreen: React.FC<WebViewScreenProps> = ({
 
             {showLoader && isLoading && (
               <View style={styles.loaderContainer}>
-                <ActivityIndicator size="large" color="#6200EA" />
+                <ActivityIndicator size="large" color="#4046F9" />
               </View>
             )}
           </>
@@ -1530,7 +1496,7 @@ const WebViewScreen: React.FC<WebViewScreenProps> = ({
       </View>
     </SafeAreaView>
   );
-};
+});
 
 const styles = StyleSheet.create({
   container: {

@@ -6,18 +6,18 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  Dimensions,
-  Image,
-  Modal,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
+    ActivityIndicator,
+    Alert,
+    Dimensions,
+    Image,
+    Modal,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from "react-native";
 import { SafeAreaView as SafeAreaViewContext } from "react-native-safe-area-context";
 
@@ -25,39 +25,19 @@ import { SafeAreaView as SafeAreaViewContext } from "react-native-safe-area-cont
 const CATEGORIES = [
   "Electronics",
   "Mobile Phones",
-  "Computers & Accessories",
-  "Fashion",
-  "Men's Clothing",
-  "Women's Clothing",
-  "Shoes",
-  "Accessories",
-  "Home & Garden",
+  "Laptops",
+  "TV & Home Theater",
   "Furniture",
-  "Kitchen & Dining",
-  "Home Decor",
-  "Books & Media",
-  "Books",
-  "Music",
-  "Movies",
-  "Video Games",
-  "Sports & Outdoors",
-  "Sporting Goods",
-  "Outdoor Recreation",
-  "Exercise Equipment",
-  "Toys & Hobbies",
-  "Toys",
-  "Collectibles",
-  "Arts & Crafts",
-  "Beauty & Health",
-  "Makeup",
-  "Skincare",
-  "Health Equipment",
-  "Vehicles",
-  "Cars",
-  "Motorcycles",
-  "Bicycles",
-  "Auto Parts",
-  "Services",
+  "Clothing & Accessories",
+  "Books & Stationery",
+  "Sports & Fitness",
+  "Home & Kitchen",
+  "Automotive",
+  "Toys & Games",
+  "Musical Instruments",
+  "Art & Collectibles",
+  "Jewelry & Watches",
+  "Health & Beauty",
   "Other",
 ];
 
@@ -83,13 +63,22 @@ export default function AddItem() {
   const [webViewRef, setWebViewRef] = useState(null);
 
   // Form state
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<{
+    title: string;
+    description: string;
+    price: string;
+    category: string;
+    condition: string;
+    location: string;
+    categories: string[];
+  }>({
     title: "",
     description: "",
     price: "",
     category: CATEGORIES[0],
     condition: CONDITIONS[0],
     location: "",
+    categories: [],
   });
 
   // Image handling state
@@ -109,6 +98,12 @@ export default function AddItem() {
   const [conditionDropdownVisible, setConditionDropdownVisible] =
     useState(false);
 
+  // Add state for new listing data
+  const [newListing, setNewListing] = useState<{
+    slug: string;
+    product_id: string;
+  } | null>(null);
+
   // Reset form when the component is focused again
   useFocusEffect(
     useCallback(() => {
@@ -125,6 +120,7 @@ export default function AddItem() {
           category: CATEGORIES[0],
           condition: CONDITIONS[0],
           location: "",
+          categories: [], // Reset categories array
         });
 
         // Reset images
@@ -204,6 +200,30 @@ export default function AddItem() {
       delete newErrors[field];
       setFormErrors(newErrors);
     }
+  };
+
+  // Add handler for category selection
+  const handleCategoryToggle = (category: string) => {
+    setFormData(prevData => {
+      const currentCategories = [...prevData.categories];
+      
+      // Check if category is already selected
+      const index = currentCategories.indexOf(category);
+      
+      // Toggle selection
+      if (index > -1) {
+        // Remove category if already selected
+        currentCategories.splice(index, 1);
+      } else {
+        // Add category if not selected
+        currentCategories.push(category);
+      }
+      
+      return {
+        ...prevData,
+        categories: currentCategories
+      };
+    });
   };
 
   // Pick image from gallery
@@ -336,6 +356,10 @@ export default function AddItem() {
     if (!formData.location.trim()) {
       errors.location = "Location is required";
     }
+    
+    if (formData.categories.length === 0) {
+      errors.categories = "At least one category is required";
+    }
 
     if (images.length === 0) {
       errors.images = "At least one image is required";
@@ -387,6 +411,11 @@ export default function AddItem() {
       formDataToSend.append("price", formData.price);
       formDataToSend.append("condition", formData.condition);
       formDataToSend.append("location", formData.location);
+      
+      // Add categories (multiple)
+      formData.categories.forEach(category => {
+        formDataToSend.append("categories", category);
+      });
 
       // Generate a slug from the title
       const slug = formData.title
@@ -421,18 +450,13 @@ export default function AddItem() {
       );
 
       if (response.status === 201) {
-        Alert.alert(
-          "Success",
-          "Your listing has been created successfully!",
-          [
-            {
-              text: "OK",
-              onPress: () => {
-                router.push('/(tabs)/listings' as any);
-              },
-            },
-          ]
-        );
+        // Set new listing data for success screen
+        setNewListing({
+          slug: response.data.slug,
+          product_id: response.data.product_id || response.data.id,
+        });
+        // Show success screen
+        setCurrentStep(4);
       }
     } catch (error) {
       console.error("Error creating listing:", error);
@@ -442,6 +466,15 @@ export default function AddItem() {
       );
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  // Add handler for "View Item" button in success screen
+  const handleViewItem = () => {
+    if (newListing) {
+      router.push({pathname: '/web', params: {uri: `https://listtra.com/listings/${newListing.slug}/${newListing.product_id}`}} as any);
+    } else {
+      router.push('/(tabs)/listings' as any);
     }
   };
 
@@ -794,6 +827,35 @@ export default function AddItem() {
                 <Text style={styles.errorText}>{formErrors.title}</Text>
               )}
             </View>
+            
+            {/* Categories Selection */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Categories* (select at least one)</Text>
+              {formErrors.categories && (
+                <Text style={styles.errorText}>{formErrors.categories}</Text>
+              )}
+              <View style={styles.categoriesContainer}>
+                {CATEGORIES.map((category) => (
+                  <TouchableOpacity
+                    key={category}
+                    style={[
+                      styles.categoryItem,
+                      formData.categories.includes(category) && styles.selectedCategoryItem
+                    ]}
+                    onPress={() => handleCategoryToggle(category)}
+                  >
+                    <Text 
+                      style={[
+                        styles.categoryText,
+                        formData.categories.includes(category) && styles.selectedCategoryText
+                      ]}
+                    >
+                      {category}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
 
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Description*</Text>
@@ -900,11 +962,16 @@ export default function AddItem() {
 
             <TouchableOpacity
               style={styles.exploreButton}
-              onPress={() => {
-                router.push('/(tabs)/listings' as any);
-              }}
+              onPress={handleViewItem}
             >
-              <Text style={styles.exploreButtonText}>View Listings</Text>
+              <Text style={styles.exploreButtonText}>View Item</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={[styles.exploreButton, { backgroundColor: '#fff', borderWidth: 1, borderColor: '#0066CC', marginTop: 12 }]}
+              onPress={() => router.push('/(tabs)/listings' as any)}
+            >
+              <Text style={[styles.exploreButtonText, { color: '#0066CC' }]}>Go to Listings</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1428,5 +1495,33 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 16,
     fontWeight: "bold",
+  },
+  // Category styles
+  categoriesContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginVertical: 8,
+  },
+  categoryItem: {
+    backgroundColor: '#F5F5F5',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginRight: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#EEEEEE',
+  },
+  selectedCategoryItem: {
+    backgroundColor: '#E1F5FE',
+    borderColor: '#0066CC',
+  },
+  categoryText: {
+    fontSize: 14,
+    color: '#333333',
+  },
+  selectedCategoryText: {
+    color: '#0066CC',
+    fontWeight: '500',
   },
 });

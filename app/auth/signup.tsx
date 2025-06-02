@@ -1,19 +1,19 @@
-import { FontAwesome } from '@expo/vector-icons';
+import { FontAwesome, Ionicons } from '@expo/vector-icons';
 import { Link, useRouter } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    KeyboardAvoidingView,
-    Platform,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { useAuth } from '../../context/AuthContext';
 
@@ -25,6 +25,7 @@ export default function SignUpScreen() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [validationError, setValidationError] = useState('');
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const router = useRouter();
 
   // Check for pending email from failed Google sign-in
@@ -79,6 +80,12 @@ export default function SignUpScreen() {
       return false;
     }
 
+    // Validate terms acceptance
+    if (!termsAccepted) {
+      setValidationError('You must accept the Terms of Service and Privacy Policy');
+      return false;
+    }
+
     return true;
   };
 
@@ -91,11 +98,17 @@ export default function SignUpScreen() {
     const userData = {
       email,
       nickname,
+      username: nickname,
       password,
-      password2: confirmPassword,
+      password_confirm: confirmPassword,
     };
 
     await register(userData);
+  };
+
+  // Navigate to terms page
+  const handleTermsNavigation = () => {
+    router.push('/auth/terms');
   };
 
   return (
@@ -105,10 +118,12 @@ export default function SignUpScreen() {
     >
       <StatusBar style="light" />
       
-      {/* Purple Header */}
+      {/* Blue Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Create Account</Text>
-        <Text style={styles.headerSubtitle}>Sign up to get started!</Text>
+        <View style={styles.headerContent}>
+          <Text style={styles.headerTitle}>Create Account</Text>
+          <Text style={styles.headerSubtitle}>Sign up to get started!</Text>
+        </View>
       </View>
 
       <ScrollView 
@@ -135,7 +150,9 @@ export default function SignUpScreen() {
               autoCapitalize="none"
               placeholderTextColor="#A0A0A0"
             />
-            <FontAwesome name="envelope-o" size={18} color="#A0A0A0" style={styles.inputIcon} />
+            <View style={styles.inputIcon}>
+              <FontAwesome name="envelope-o" size={20} color="#A0A0A0" />
+            </View>
           </View>
 
           {/* Nickname Input */}
@@ -148,7 +165,9 @@ export default function SignUpScreen() {
               autoCapitalize="none"
               placeholderTextColor="#A0A0A0"
             />
-            <FontAwesome name="user" size={18} color="#A0A0A0" style={styles.inputIcon} />
+            <View style={styles.inputIcon}>
+              <FontAwesome name="user" size={20} color="#A0A0A0" />
+            </View>
           </View>
 
           {/* Password Input */}
@@ -165,9 +184,9 @@ export default function SignUpScreen() {
               onPress={() => setShowPassword(!showPassword)}
               style={styles.inputIcon}
             >
-              <FontAwesome 
-                name={showPassword ? "eye-slash" : "eye"} 
-                size={18} 
+              <Ionicons 
+                name={showPassword ? "eye-off" : "eye"} 
+                size={20} 
                 color="#A0A0A0" 
               />
             </Pressable>
@@ -183,7 +202,35 @@ export default function SignUpScreen() {
               secureTextEntry={!showPassword}
               placeholderTextColor="#A0A0A0"
             />
-            <FontAwesome name="lock" size={18} color="#A0A0A0" style={styles.inputIcon} />
+            <View style={styles.inputIcon}>
+              <FontAwesome name="lock" size={20} color="#A0A0A0" />
+            </View>
+          </View>
+
+          {/* Terms and Conditions Checkbox */}
+          <View style={styles.termsContainer}>
+            <TouchableOpacity 
+              style={styles.checkbox} 
+              onPress={() => setTermsAccepted(!termsAccepted)}
+            >
+              {termsAccepted ? (
+                <Ionicons name="checkbox" size={20} color="#2528be" />
+              ) : (
+                <Ionicons name="square-outline" size={20} color="#A0A0A0" />
+              )}
+            </TouchableOpacity>
+            <View style={styles.termsTextContainer}>
+              <Text style={styles.termsText}>
+                I agree to the{' '}
+                <Text style={styles.termsLink} onPress={handleTermsNavigation}>
+                  Terms of Service
+                </Text>
+                {' '}and{' '}
+                <Text style={styles.termsLink} onPress={handleTermsNavigation}>
+                  Privacy Policy
+                </Text>
+              </Text>
+            </View>
           </View>
 
           {/* Sign Up Button */}
@@ -191,6 +238,7 @@ export default function SignUpScreen() {
             style={styles.signUpButton}
             onPress={handleSignUp}
             disabled={isLoading}
+            activeOpacity={0.8}
           >
             {isLoading ? (
               <ActivityIndicator color="#FFFFFF" />
@@ -220,39 +268,45 @@ const styles = StyleSheet.create({
     backgroundColor: 'white',
   },
   header: {
-    backgroundColor: '#6200EA', // Replace with your app's primary color
-    paddingTop: 60,
-    paddingBottom: 30,
+    backgroundColor: '#2528be',
+    paddingTop: Platform.OS === 'ios' ? 100 : 90,
+    paddingBottom: 40,
+    position: 'relative',
+    zIndex: 1,
+  },
+  headerContent: {
     alignItems: 'center',
     justifyContent: 'center',
+    paddingTop: 20,
   },
   headerTitle: {
-    fontSize: 28,
+    fontSize: 32,
     fontWeight: 'bold',
     color: 'white',
     marginBottom: 8,
   },
   headerSubtitle: {
-    fontSize: 16,
+    fontSize: 18,
     color: 'white',
     opacity: 0.9,
   },
   scrollContent: {
     flexGrow: 1,
     paddingBottom: 20,
+    marginTop: -25,
   },
   formCard: {
+    marginTop: 30,
     backgroundColor: 'white',
-    borderRadius: 15,
-    marginTop: -20,
-    marginHorizontal: 16,
-    paddingHorizontal: 16,
-    paddingVertical: 24,
+    borderRadius: 24,
+    marginHorizontal: 20,
+    paddingHorizontal: 20,
+    paddingVertical: 30,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 5,
   },
   errorContainer: {
     backgroundColor: '#FFEBEE',
@@ -265,29 +319,56 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   inputContainer: {
-    marginBottom: 16,
+    marginBottom: 20,
     position: 'relative',
   },
   input: {
     borderWidth: 1,
     borderColor: '#E0E0E0',
     borderRadius: 8,
-    padding: 12,
+    padding: 16,
     fontSize: 16,
-    paddingRight: 40, // Space for the icon
-    backgroundColor: '#F9F9F9',
+    paddingRight: 50,
+    backgroundColor: 'white',
   },
   inputIcon: {
     position: 'absolute',
-    right: 12,
-    top: 14,
+    right: 15,
+    top: 15,
+  },
+  termsContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 20,
+    marginTop: 5,
+  },
+  checkbox: {
+    marginRight: 10,
+    paddingTop: 1,
+  },
+  termsTextContainer: {
+    flex: 1,
+  },
+  termsText: {
+    fontSize: 13,
+    color: '#757575',
+    lineHeight: 18,
+  },
+  termsLink: {
+    color: '#2528be',
+    fontWeight: '600',
   },
   signUpButton: {
-    backgroundColor: '#6200EA',
-    borderRadius: 8,
-    padding: 14,
+    backgroundColor: '#2528be',
+    borderRadius: 12,
+    padding: 16,
     alignItems: 'center',
-    marginTop: 8,
+    marginTop: 10,
+    shadowColor: '#2528be',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
   },
   buttonText: {
     color: 'white',
@@ -297,15 +378,15 @@ const styles = StyleSheet.create({
   signinContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
-    marginTop: 20,
+    marginTop: 24,
   },
   signinText: {
     color: '#757575',
     fontSize: 14,
   },
   signinLink: {
-    color: '#6200EA',
+    color: '#2528be',
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '700',
   },
 }); 
