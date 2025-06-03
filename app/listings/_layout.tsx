@@ -17,6 +17,15 @@ export default function ListingsLayout() {
         },
         animation: 'slide_from_right',
       }}
-    />
+    >
+      {/* Explicitly hide header for product detail page */}
+      <Stack.Screen 
+        name="[slug]/[product_id]/page" 
+        options={{ 
+          headerShown: false,
+          animation: 'slide_from_right'
+        }} 
+      />
+    </Stack>
   );
 } 

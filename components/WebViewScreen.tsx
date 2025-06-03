@@ -1,7 +1,6 @@
 import { useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import { useAuth } from '../context/AuthContext';
 
@@ -137,12 +136,42 @@ const WebViewScreen = React.forwardRef<{ injectJavaScript: (script: string) => v
     console.log('Navigation state change:', navState.url);
     setCurrentUrl(navState.url);
     
+    // Handle redirects to sign-in page when we have valid tokens
+    if (navState.url.includes('/auth/signin') && isAuthenticated && tokens.accessToken) {
+      console.log('Detected redirect to sign-in while authenticated, injecting tokens and redirecting back');
+      
+      setTimeout(() => {
+        if (webViewRef.current) {
+          // Inject tokens and redirect to original destination or listings
+          const redirectScript = `
+            (function() {
+              try {
+                console.log('Injecting tokens and redirecting from sign-in page');
+                localStorage.setItem('token', '${tokens.accessToken}');
+                localStorage.setItem('refreshToken', '${tokens.refreshToken}');
+                localStorage.setItem('user', '${JSON.stringify(user || {})}');
+                
+                // Redirect back to listings
+                window.location.href = '/listings';
+                return true;
+              } catch (error) {
+                console.error('Error handling auth redirect:', error);
+                return false;
+              }
+            })();
+          `;
+          
+          webViewRef.current.injectJavaScript(redirectScript);
+        }
+      }, 500);
+    }
+    
     // Special handling for chat detail pages
     if (navState.url.includes('/chat/') && navState.url.includes('listtra.com')) {
       console.log('Detected chat detail page, injecting tokens immediately');
-          setTimeout(() => {
+      setTimeout(() => {
         if (isAuthenticated && tokens.accessToken) {
-        injectTokensToWebView();
+          injectTokensToWebView();
         }
       }, 300);
     }
@@ -482,6 +511,9 @@ const WebViewScreen = React.forwardRef<{ injectJavaScript: (script: string) => v
       }, delay);
     };
     
+    // Always inject the hideNavbar script regardless of URL
+    injectWithDelay(hideNavbarScript, 800);
+    
     // Use a different approach based on URL
     if (currentUrl.includes('/chat/')) {
       console.log('Chat page detected, preparing chat scripts');
@@ -603,7 +635,102 @@ const WebViewScreen = React.forwardRef<{ injectJavaScript: (script: string) => v
       // Inject only once with longer delay to ensure page is fully loaded
       injectWithDelay(enhanceChatScript, 1500);
     } else if (currentUrl.includes('/listings/')) {
-      // Keep the listing script as is
+      console.log('Listing page detected, preparing listing scripts');
+      
+      // Create a listing enhancement script that doesn't depend on external variables
+      const enhanceListingScript = `
+        (function() {
+          try {
+            console.log('Running listing enhancement script');
+            
+            // Function to handle Make Offer button
+            const setupMakeOfferButton = () => {
+              document.querySelectorAll('button').forEach(btn => {
+                if (btn.innerText && btn.innerText.includes('Make Offer') && !btn.dataset.handlerAdded) {
+                  console.log('Found Make Offer button, adding handler');
+                  btn.dataset.handlerAdded = 'true';
+                  
+                  // Add click handler
+                  btn.addEventListener('click', async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    console.log('Make Offer clicked, handling with custom script');
+                    
+                    // Get product ID from URL
+                    const matches = window.location.pathname.match(/\\/listings\\/[^\\/]+\\/([^\\/]+)/);
+                    const productId = matches ? matches[1] : null;
+                    
+                    if (!productId) {
+                      console.error('Could not extract product ID from URL');
+                      return;
+                    }
+                    
+                    // Show loading state
+                    const originalText = btn.innerText;
+                    btn.innerText = 'Processing...';
+                    btn.disabled = true;
+                    
+                    try {
+                      // Make API call to create conversation
+                      const API_URL = 'https://backend.listtra.com';
+                      const token = localStorage.getItem('token');
+                      
+                      if (!token) {
+                        console.error('No authentication token found');
+                        window.ReactNativeWebView.postMessage(JSON.stringify({
+                          type: 'AUTH_REQUIRED',
+                          returnTo: window.location.pathname
+                        }));
+                        return;
+                      }
+                      
+                      const response = await fetch(\`\${API_URL}/api/chat/conversations/\`, {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/json',
+                          'Authorization': \`Bearer \${token}\`
+                        },
+                        body: JSON.stringify({ listing: productId })
+                      });
+                      
+                      if (!response.ok) {
+                        throw new Error('Failed to create conversation');
+                      }
+                      
+                      const data = await response.json();
+                      console.log('Conversation created:', data);
+                      
+                      // Notify the native app to navigate to chat
+                      window.ReactNativeWebView.postMessage(JSON.stringify({
+                        type: 'NAVIGATE_CHAT',
+                        chatId: data.id
+                      }));
+                    } catch (error) {
+                      console.error('Error creating conversation:', error);
+                      alert('Failed to start chat. Please try again.');
+                    } finally {
+                      // Restore button state
+                      btn.innerText = originalText;
+                      btn.disabled = false;
+                    }
+                  });
+                }
+              });
+            };
+            
+            // Run immediately and with delays
+            setupMakeOfferButton();
+            setTimeout(setupMakeOfferButton, 1000);
+            setTimeout(setupMakeOfferButton, 2000);
+          } catch(e) {
+            console.error('Error in listing enhancement script:', e);
+          }
+          return true;
+        })();
+      `;
+      
+      injectWithDelay(enhanceListingScript);
     }
   }, [currentUrl, isLoading, webViewRef.current]);
 
@@ -808,6 +935,65 @@ const WebViewScreen = React.forwardRef<{ injectJavaScript: (script: string) => v
     })();
   `;
 
+  // Add new script to hide navbar
+  const hideNavbarScript = `
+    (function() {
+      // Function to hide navbar and reclaim its space
+      function hideNavbar() {
+        // Find and hide the navbar element
+        const navbar = document.querySelector('nav');
+        if (navbar) {
+          console.log('Found navbar, hiding it');
+          navbar.style.display = 'none';
+          
+          // Also adjust the main content container to reclaim space
+          const mainContent = document.querySelector('main');
+          if (mainContent) {
+            console.log('Adjusting main content to reclaim navbar space');
+            mainContent.style.marginTop = '0';
+            mainContent.style.paddingTop = '0';
+          }
+          
+          // Look for container with mt-16 class (likely spacing for navbar)
+          document.querySelectorAll('[class*="mt-16"]').forEach(element => {
+            element.classList.remove('mt-16');
+            element.classList.add('mt-0');
+          });
+          
+          // Also adjust any fixed positioning that might be relative to navbar
+          document.querySelectorAll('[class*="top-"]').forEach(element => {
+            // Check if it's likely positioned relative to navbar
+            if (element.classList.contains('top-14') || 
+                element.classList.contains('top-16') || 
+                element.classList.contains('top-20')) {
+              element.style.top = '0';
+            }
+          });
+        }
+      }
+      
+      // Run immediately
+      hideNavbar();
+      
+      // Also run after DOM changes in case navbar is loaded dynamically
+      const observer = new MutationObserver(function() {
+        hideNavbar();
+      });
+      
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true
+      });
+      
+      // Run again after a delay to catch any late-rendered elements
+      setTimeout(hideNavbar, 500);
+      setTimeout(hideNavbar, 1500);
+      
+      console.log('Navbar hiding script installed');
+      return true;
+    })();
+  `;
+
   // Create a more aggressive token injection that forces reload if needed
   const forceTokenInjection = `
     (function() {
@@ -895,6 +1081,7 @@ const WebViewScreen = React.forwardRef<{ injectJavaScript: (script: string) => v
   // Combine all injected scripts
   const injectInitialScripts = `
     ${preventAuthRedirectScript}
+    ${hideNavbarScript}
     ${forceTokenInjection}
     ${profilePageScript}
     true;
@@ -1134,377 +1321,127 @@ const WebViewScreen = React.forwardRef<{ injectJavaScript: (script: string) => v
     })();
   `;
 
-  // Add this right after the WebViewScreen component definition
-  // Enhance WebView with custom scripts based on page type
-  useEffect(() => {
-    // Wait for webViewRef to be available and page to fully load
-    if (!webViewRef.current || isLoading) return;
-    
-    console.log('Checking if page-specific scripts need to be injected for:', currentUrl);
-    
-    // Inject script with a delay to ensure page is ready
-    const injectWithDelay = (script: string, delay: number = 1000) => {
-      setTimeout(() => {
-        if (webViewRef.current) {
-          console.log('Injecting script after delay');
-          webViewRef.current.injectJavaScript(script);
-        }
-      }, delay);
-    };
-    
-    // Use a different approach based on URL
-    if (currentUrl.includes('/chat/')) {
-      console.log('Chat page detected, preparing chat scripts');
-      
-      // Create a chat enhancement script that doesn't depend on external variables
-      // This version is optimized to prevent freezing
-      const enhanceChatScript = `
-        (function() {
-          try {
-            console.log('Running chat enhancement script');
-            
-            // Function to detect if user is buyer or seller
-            const detectUserRole = () => {
-              // Get user data from localStorage
-              const userData = JSON.parse(localStorage.getItem('user') || '{}');
-              const userID = userData.id;
-              
-              if (!userID) {
-                console.error('Cannot detect role: No user ID found');
-                return;
-              }
-              
-              // Try to find conversation data in the page
-              // First look for seller ID in data attributes or other elements
-              let sellerID = null;
-              const sellerElements = document.querySelectorAll('[data-seller-id]');
-              if (sellerElements.length > 0) {
-                sellerID = sellerElements[0].getAttribute('data-seller-id');
-              }
-              
-              // If no explicit seller ID, check URL parameters
-              if (!sellerID) {
-                const urlParams = new URLSearchParams(window.location.search);
-                const isBuyerParam = urlParams.get('isBuyer');
-                if (isBuyerParam !== null) {
-                  const isBuyer = isBuyerParam === 'true';
-                  console.log('Using isBuyer parameter:', isBuyer);
-                  setUserRole(isBuyer);
-                  return;
-                }
-              }
-              
-              // If still no seller ID, try to infer from UI elements
-              if (!sellerID) {
-                // Check for seller-specific controls (Accept/Reject buttons)
-                const acceptBtn = document.querySelector('button[class*="bg-green"]');
-                const rejectBtn = document.querySelector('button[class*="bg-red"]');
-                
-                if (acceptBtn || rejectBtn) {
-                  // If accept/reject buttons exist, user is likely the seller
-                  setUserRole(false);
-                  return;
-                }
-                
-                // Check for buyer-specific controls (offer input)
-                const offerInput = document.querySelector('input[type="number"]');
-                if (offerInput) {
-                  // If offer input exists, user is likely the buyer
-                  setUserRole(true);
-                  return;
-                }
-              }
-              
-              // If we got here, we couldn't determine the role
-              console.warn('Could not determine user role, defaulting to buyer');
-              setUserRole(true);
-            };
-            
-            // Function to apply UI changes based on role
-            const setUserRole = (isBuyer) => {
-              console.log('Setting user role:', isBuyer ? 'Buyer' : 'Seller');
-              
-              // Add a class to the body for CSS targeting
-              document.body.classList.add(isBuyer ? 'is-buyer' : 'is-seller');
-              window.__isBuyer = isBuyer;
-              
-              // Apply UI adjustments
-              setTimeout(() => {
-                if (isBuyer) {
-                  // Show buyer elements, hide seller elements
-                  document.querySelectorAll('.mt-2').forEach(container => {
-                    const offerInput = container.querySelector('input[type="number"]');
-                    if (offerInput) {
-                      container.style.display = 'block';
-                    }
-                  });
-                  
-                  document.querySelectorAll('.flex.gap-3.justify-center.mt-1').forEach(el => {
-                    if (el.querySelector('button[class*="bg-green-"]') || 
-                        el.querySelector('button[class*="bg-red-"]')) {
-                      el.style.display = 'none';
-                    }
-                  });
-                } else {
-                  // Show seller elements, hide buyer elements
-                  document.querySelectorAll('.mt-2').forEach(container => {
-                    const offerInput = container.querySelector('input[type="number"]');
-                    if (offerInput) {
-                      container.style.display = 'none';
-                    }
-                  });
-                  
-                  document.querySelectorAll('.flex.gap-3.justify-center.mt-1').forEach(el => {
-                    if (el.querySelector('button[class*="bg-green-"]') || 
-                        el.querySelector('button[class*="bg-red-"]')) {
-                      el.style.display = 'flex';
-                    }
-                  });
-                }
-              }, 1000);
-            };
-            
-            // Run role detection
-            detectUserRole();
-            
-            // Also run after content changes
-            const observer = new MutationObserver(() => {
-              detectUserRole();
-            });
-            
-            observer.observe(document.body, {
-              childList: true,
-              subtree: true
-            });
-          } catch(e) {
-            console.error('Error in chat enhancement script:', e);
-          }
-          return true;
-        })();
-      `;
-      
-      injectWithDelay(enhanceChatScript);
-    } else if (currentUrl.includes('/listings/')) {
-      console.log('Listing page detected, preparing listing scripts');
-      
-      // Create a listing enhancement script that doesn't depend on external variables
-      const enhanceListingScript = `
-        (function() {
-          try {
-            console.log('Running listing enhancement script');
-            
-            // Function to handle Make Offer button
-            const setupMakeOfferButton = () => {
-              document.querySelectorAll('button').forEach(btn => {
-                if (btn.innerText && btn.innerText.includes('Make Offer') && !btn.dataset.handlerAdded) {
-                  console.log('Found Make Offer button, adding handler');
-                  btn.dataset.handlerAdded = 'true';
-                  
-                  // Add click handler
-                  btn.addEventListener('click', async (e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    
-                    console.log('Make Offer clicked, handling with custom script');
-                    
-                    // Get product ID from URL
-                    const matches = window.location.pathname.match(/\\/listings\\/[^\\/]+\\/([^\\/]+)/);
-                    const productId = matches ? matches[1] : null;
-                    
-                    if (!productId) {
-                      console.error('Could not extract product ID from URL');
-                      return;
-                    }
-                    
-                    // Show loading state
-                    const originalText = btn.innerText;
-                    btn.innerText = 'Processing...';
-                    btn.disabled = true;
-                    
-                    try {
-                      // Make API call to create conversation
-                      const API_URL = 'https://backend.listtra.com';
-                      const token = localStorage.getItem('token');
-                      
-                      if (!token) {
-                        console.error('No authentication token found');
-                        window.ReactNativeWebView.postMessage(JSON.stringify({
-                          type: 'AUTH_REQUIRED',
-                          returnTo: window.location.pathname
-                        }));
-                        return;
-                      }
-                      
-                      const response = await fetch(\`\${API_URL}/api/chat/conversations/\`, {
-                        method: 'POST',
-                        headers: {
-                          'Content-Type': 'application/json',
-                          'Authorization': \`Bearer \${token}\`
-                        },
-                        body: JSON.stringify({ listing: productId })
-                      });
-                      
-                      if (!response.ok) {
-                        throw new Error('Failed to create conversation');
-                      }
-                      
-                      const data = await response.json();
-                      console.log('Conversation created:', data);
-                      
-                      // Notify the native app to navigate to chat
-                      window.ReactNativeWebView.postMessage(JSON.stringify({
-                        type: 'NAVIGATE_CHAT',
-                        chatId: data.id
-                      }));
-                    } catch (error) {
-                      console.error('Error creating conversation:', error);
-                      alert('Failed to start chat. Please try again.');
-                    } finally {
-                      // Restore button state
-                      btn.innerText = originalText;
-                      btn.disabled = false;
-                    }
-                  });
-                }
-              });
-            };
-            
-            // Run immediately and with delays
-            setupMakeOfferButton();
-            setTimeout(setupMakeOfferButton, 1000);
-            setTimeout(setupMakeOfferButton, 2000);
-          } catch(e) {
-            console.error('Error in listing enhancement script:', e);
-          }
-          return true;
-        })();
-      `;
-      
-      injectWithDelay(enhanceListingScript);
-    }
-  }, [currentUrl, isLoading, webViewRef.current]);
-
   return (
-    <SafeAreaView style={{ flex: 1 }}>
-      <View style={styles.container}>
-        {error ? (
-          <View style={styles.errorContainer}>
-            <Text style={styles.errorText}>
-              {error}
-            </Text>
-          </View>
-        ) : (
-          <>
-            <WebView
-              ref={webViewRef}
-              source={{ uri: getAuthenticatedUrl(currentUrl) }}
-              style={styles.webview}
-              originWhitelist={['*']}
-              domStorageEnabled={true}
-              allowUniversalAccessFromFileURLs={true}
-              javaScriptCanOpenWindowsAutomatically={true}
-              onMessage={onMessage || handleWebViewMessage}
-              javaScriptEnabled={true}
-              startInLoadingState={true}
-              cacheEnabled={true}
-              cacheMode="LOAD_DEFAULT"
-              mixedContentMode="always"
-              injectedJavaScriptBeforeContentLoaded={`
-                ${isAuthenticated ? `
-                  window.isNativeAuth = true;
-                  window.authToken = "${tokens.accessToken || ""}";
-                  window.refreshToken = "${tokens.refreshToken || ""}";
-                  window.userData = ${JSON.stringify(user || {})};
-                  // Add profile page specific overrides
-                  ${currentUrl.includes('/profile') ? profileAuthOverrideScript : ''}
-                ` : ''}
-                ${injectedJavaScript}
-                true;
-              `}
-              onShouldStartLoadWithRequest={(request) => {
-                // Block redirect to signin page if authenticated
-                if (isAuthenticated && tokens.accessToken && 
-                    (request.url.includes('/auth/signin') || 
-                     request.url.includes('/login'))) {
-                  console.log('Blocking redirect to auth page:', request.url);
-                  // Inject tokens again
-                  setTimeout(() => {
-                    injectTokensToWebView();
-                    if (webViewRef.current) {
-                      webViewRef.current.injectJavaScript(`
-                        (function() {
-                          if (window.location.pathname.includes('/auth/')) {
-                            window.location.replace('/profile');
-                          }
-                          return true;
-                        })();
-                      `);
-                    }
-                  }, 100);
-                  return false;
-                }
-                return true;
-              }}
-              onLoad={() => {
-                setIsLoading(false);
-                
-                // When page loads, inject tokens if authenticated
-                if (isAuthenticated && tokens.accessToken && tokens.refreshToken) {
-                  // Give time for page to fully initialize
+    <View style={styles.container}>
+      {error ? (
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>
+            {error}
+          </Text>
+        </View>
+      ) : (
+        <>
+          <WebView
+            ref={webViewRef}
+            source={{ uri: getAuthenticatedUrl(currentUrl) }}
+            style={styles.webview}
+            originWhitelist={['*']}
+            domStorageEnabled={true}
+            allowUniversalAccessFromFileURLs={true}
+            javaScriptCanOpenWindowsAutomatically={true}
+            onMessage={onMessage || handleWebViewMessage}
+            javaScriptEnabled={true}
+            startInLoadingState={true}
+            cacheEnabled={true}
+            cacheMode="LOAD_DEFAULT"
+            mixedContentMode="always"
+            injectedJavaScriptBeforeContentLoaded={`
+              ${isAuthenticated ? `
+                window.isNativeAuth = true;
+                window.authToken = "${tokens.accessToken || ""}";
+                window.refreshToken = "${tokens.refreshToken || ""}";
+                window.userData = ${JSON.stringify(user || {})};
+                // Add profile page specific overrides
+                ${currentUrl.includes('/profile') ? profileAuthOverrideScript : ''}
+              ` : ''}
+              ${injectedJavaScript}
+              true;
+            `}
+            onShouldStartLoadWithRequest={(request) => {
+              // Block redirect to signin page if authenticated
+              if (isAuthenticated && tokens.accessToken && 
+                  (request.url.includes('/auth/signin') || 
+                   request.url.includes('/login'))) {
+                console.log('Blocking redirect to auth page:', request.url);
+                // Inject tokens again
+                setTimeout(() => {
                   injectTokensToWebView();
-                  
-                  // Inject our combined scripts
-                  setTimeout(() => {
-                    if (webViewRef.current) {
-                      webViewRef.current.injectJavaScript(injectInitialScripts);
-                      
-                      // Also inject the custom script if provided
-                      if (injectedJavaScript) {
-                        webViewRef.current.injectJavaScript(injectedJavaScript);
-                      }
+                  if (webViewRef.current) {
+                    webViewRef.current.injectJavaScript(`
+                      (function() {
+                        if (window.location.pathname.includes('/auth/')) {
+                          window.location.replace('/profile');
+                        }
+                        return true;
+                      })();
+                    `);
+                  }
+                }, 100);
+                return false;
+              }
+              return true;
+            }}
+            onLoad={() => {
+              setIsLoading(false);
+              
+              // When page loads, inject tokens if authenticated
+              if (isAuthenticated && tokens.accessToken && tokens.refreshToken) {
+                // Give time for page to fully initialize
+                injectTokensToWebView();
+                
+                // Inject our combined scripts
+                setTimeout(() => {
+                  if (webViewRef.current) {
+                    webViewRef.current.injectJavaScript(injectInitialScripts);
+                    
+                    // Also inject the custom script if provided
+                    if (injectedJavaScript) {
+                      webViewRef.current.injectJavaScript(injectedJavaScript);
                     }
-                  }, 300);
-                }
-              }}
-              onError={(syntheticEvent) => {
-                const { nativeEvent } = syntheticEvent;
-                setError(`WebView error: ${nativeEvent.description}`);
-                setIsLoading(false);
-              }}
-              onHttpError={(syntheticEvent) => {
-                const { nativeEvent } = syntheticEvent;
-                if (nativeEvent.statusCode >= 400) {
-                  setError(`Network error: ${nativeEvent.statusCode}`);
-                }
-                setIsLoading(false);
-              }}
-              onNavigationStateChange={handleNavigationStateChange}
-              injectedJavaScript={baseInjectedJavaScript}
-              sharedCookiesEnabled={true}
-              allowsBackForwardNavigationGestures={true}
-              pullToRefreshEnabled={true}
-              thirdPartyCookiesEnabled={true}
-            />
+                  }
+                }, 300);
+              }
+            }}
+            onError={(syntheticEvent) => {
+              const { nativeEvent } = syntheticEvent;
+              setError(`WebView error: ${nativeEvent.description}`);
+              setIsLoading(false);
+            }}
+            onHttpError={(syntheticEvent) => {
+              const { nativeEvent } = syntheticEvent;
+              if (nativeEvent.statusCode >= 400) {
+                setError(`Network error: ${nativeEvent.statusCode}`);
+              }
+              setIsLoading(false);
+            }}
+            onNavigationStateChange={handleNavigationStateChange}
+            injectedJavaScript={baseInjectedJavaScript}
+            sharedCookiesEnabled={true}
+            allowsBackForwardNavigationGestures={true}
+            pullToRefreshEnabled={true}
+            thirdPartyCookiesEnabled={true}
+          />
 
-            {showLoader && isLoading && (
-              <View style={styles.loaderContainer}>
-                <ActivityIndicator size="large" color="#4046F9" />
-              </View>
-            )}
-          </>
-        )}
-      </View>
-    </SafeAreaView>
+          {showLoader && isLoading && (
+            <View style={styles.loaderContainer}>
+              <ActivityIndicator size="large" color="#4046F9" />
+            </View>
+          )}
+        </>
+      )}
+    </View>
   );
 });
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: 'white',
+    overflow: 'hidden',
   },
   webview: {
     flex: 1,
+    backgroundColor: 'white',
   },
   loaderContainer: {
     ...StyleSheet.absoluteFillObject,
@@ -1517,6 +1454,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
+    backgroundColor: 'white',
   },
   errorText: {
     color: '#D32F2F',

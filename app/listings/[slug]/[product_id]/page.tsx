@@ -5,7 +5,7 @@ import {
   Manrope_700Bold,
   useFonts,
 } from '@expo-google-fonts/manrope';
-import { AntDesign, Feather, FontAwesome, Ionicons, MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
+import { AntDesign, Ionicons, MaterialIcons } from '@expo/vector-icons';
 import axios from 'axios';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
@@ -13,12 +13,12 @@ import {
   ActivityIndicator,
   Alert,
   Dimensions,
-  FlatList,
   Image,
   Modal,
   Platform,
   SafeAreaView,
   ScrollView,
+  Share,
   StatusBar,
   StyleSheet,
   Text,
@@ -70,6 +70,113 @@ const formatCondition = (condition: string): string => {
   };
   
   return conditionMap[condition] || condition;
+};
+
+// Helper function to toggle like status using native fetch API instead of axios
+const toggleLikeAPI = async (
+  slug: string,
+  productId: string,
+  isCurrentlyLiked: boolean,
+  accessToken: string
+) => {
+  const baseURL = 'https://backend.listtra.com';
+  const endpoint = `/api/listings/${slug}/${productId}/like/`;
+  const url = `${baseURL}${endpoint}`;
+  
+  try {
+    if (isCurrentlyLiked) {
+      // Unlike - use DELETE method
+      console.log(`Unliking: DELETE ${url}`);
+      
+      const response = await fetch(url, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      
+      console.log('Unlike response status:', response.status);
+      
+      // If we get a 400 with "You have not liked this listing", treat it as success
+      if (response.status === 400) {
+        const errorData = await response.text();
+        console.log('Error response data:', errorData);
+        
+        if (errorData.includes("You have not liked this listing")) {
+          console.log('Item was already not liked on the server, treating as success');
+          return { status: 'success', alreadyUnliked: true };
+        }
+        
+        throw new Error(`Request failed with status ${response.status}: ${errorData}`);
+      }
+      
+      if (!response.ok) {
+        const errorData = await response.text();
+        console.log('Error response data:', errorData);
+        throw new Error(`Request failed with status ${response.status}: ${errorData}`);
+      }
+      
+      return { status: 'success' };
+    } else {
+      // Like - use POST method
+      console.log(`Liking: POST ${url}`);
+      
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      
+      console.log('Like response status:', response.status);
+      
+      if (!response.ok) {
+        const errorData = await response.text();
+        console.log('Error response data:', errorData);
+        throw new Error(`Request failed with status ${response.status}: ${errorData}`);
+      }
+      
+      return { status: 'success' };
+    }
+  } catch (error) {
+    console.log('API Error in toggleLikeAPI:', error);
+    throw error;
+  }
+};
+
+// Simplified retry function for network operations
+const retryOperation = async (operation: () => Promise<any>, maxRetries = 2, delay = 1000) => {
+  let lastError: unknown;
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      if (attempt > 0) {
+        console.log(`Retry attempt ${attempt}/${maxRetries}...`);
+      }
+      const result = await operation();
+      
+      // If we succeed after failures, log that we recovered
+      if (attempt > 0) {
+        console.log(`Recovered after ${attempt} failed attempts`);
+      }
+      
+      return result;
+    } catch (error) {
+      console.log(`Attempt ${attempt + 1} failed:`, error);
+      lastError = error;
+      
+      if (attempt < maxRetries) {
+        console.log(`Waiting ${delay}ms before retry...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+  
+  // All attempts failed
+  console.log(`All ${maxRetries + 1} attempts failed`);
+  throw lastError;
 };
 
 export default function ListingDetailScreen() {
@@ -151,7 +258,7 @@ export default function ListingDetailScreen() {
     
     try {
       setUpdateStatusLoading(true);
-      const url = `https://backend.listtra.com/api/listings/${product_id}/status/`;
+      const url = `https://backend.listtra.com/api/listings/${slug}/${product_id}/status/`;
       
       const response = await axios.patch(
         url, 
@@ -192,25 +299,66 @@ export default function ListingDetailScreen() {
       return;
     }
     
+    // Optimistically update UI first
+    setIsLiked(!isLiked);
+    setLikesCount(prev => isLiked ? prev - 1 : prev + 1);
+    
     try {
-      const url = `https://backend.listtra.com/api/listings/${product_id}/like/`;
+      // Check if we have a valid access token
+      if (!tokens?.accessToken) {
+        console.log('No access token available');
+        router.push('/auth/signin');
+        return;
+      }
       
-      const method = isLiked ? 'delete' : 'post';
-      await axios({
-        method,
-        url,
-        headers: { 
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${tokens.accessToken}`
-        }
+      // Store token in a const to ensure it's not null
+      const accessToken = tokens.accessToken;
+      
+      // Use retry operation with the toggleLikeAPI function
+      await retryOperation(() => 
+        toggleLikeAPI(slug, product_id, isLiked, accessToken)
+      );
+      
+      console.log(`Successfully ${isLiked ? 'unliked' : 'liked'} listing ${product_id}`);
+    } catch (error: unknown) {
+      // Only reach this point if all retry attempts failed
+      console.log('All retry attempts failed when toggling like status:', error);
+      
+      // Provide more detailed error information
+      console.log('Error details:', {
+        message: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined
       });
       
-      // Update local state
+      // Special case: If error is about "not liked" but we're trying to unlike,
+      // this is actually what we want
+      if (
+        error instanceof Error && 
+        error.message.includes("You have not liked this listing") && 
+        isLiked
+      ) {
+        console.log('Item was already unliked on server');
+        return; // Don't show error or revert UI
+      }
+      
+      // Revert optimistic update on error (for other types of errors)
       setIsLiked(!isLiked);
-      setLikesCount(prev => isLiked ? prev - 1 : prev + 1);
-    } catch (error) {
-      console.error('Error toggling like status:', error);
-      Alert.alert('Error', 'Failed to update like status');
+      setLikesCount(prev => isLiked ? prev + 1 : prev - 1);
+      
+      // Show error alert ONLY for fatal errors that couldn't be recovered
+      Alert.alert(
+        'Error',
+        'Failed to update favorite status. Please try again.',
+        [{ text: 'OK' }]
+      );
+      
+      // Check for auth errors and redirect if needed - safely check properties
+      if (
+        (typeof error === 'object' && error !== null && 'status' in error && error.status === 401) || 
+        (error instanceof Error && error.message.includes('401'))
+      ) {
+        router.push('/auth/signin');
+      }
     }
   };
   
@@ -333,11 +481,13 @@ export default function ListingDetailScreen() {
         }}
         activeOpacity={0.9}
       >
-        <Image 
-          source={{ uri: getImageUrl(item) }} 
-          style={styles.carouselImage}
-          resizeMode="contain"
-        />
+        <View style={styles.imageContainer}>
+          <Image 
+            source={{ uri: getImageUrl(item) }} 
+            style={styles.carouselImage}
+            resizeMode="contain"
+          />
+        </View>
       </TouchableOpacity>
     );
   };
@@ -346,13 +496,107 @@ export default function ListingDetailScreen() {
   const renderModalCarouselItem = ({ item }: { item: any; index: number }) => {
     return (
       <View style={styles.modalCarouselItem}>
-        <Image 
-          source={{ uri: getImageUrl(item) }} 
-          style={styles.modalCarouselImage}
-          resizeMode="contain"
-        />
+        <View style={styles.modalImageContainer}>
+          <Image 
+            source={{ uri: getImageUrl(item) }} 
+            style={styles.modalCarouselImage}
+            resizeMode="contain"
+          />
+        </View>
       </View>
     );
+  };
+  
+  // Render thumbnail item for the modal gallery
+  const renderThumbnailItem = (item: ListingImage, index: number) => {
+    return (
+      <TouchableOpacity 
+        key={index}
+        style={[
+          styles.thumbnailItem,
+          modalImageIndex === index && styles.thumbnailItemActive
+        ]}
+        onPress={() => {
+          if (modalCarouselRef.current) {
+            modalCarouselRef.current.snapToItem(index);
+            setModalImageIndex(index);
+          }
+        }}
+      >
+        <Image 
+          source={{ uri: getImageUrl(item) }} 
+          style={styles.thumbnailImage}
+          resizeMode="cover"
+        />
+      </TouchableOpacity>
+    );
+  };
+  
+  // Navigate to next image in carousel
+  const goToNextImage = () => {
+    if (carouselRef.current && activeSlide < arrangedImages.length - 1) {
+      carouselRef.current.snapToNext();
+    }
+  };
+
+  // Navigate to previous image in carousel
+  const goToPrevImage = () => {
+    if (carouselRef.current && activeSlide > 0) {
+      carouselRef.current.snapToPrev();
+    }
+  };
+
+  // Navigate to next image in modal carousel
+  const goToNextModalImage = () => {
+    if (modalCarouselRef.current && modalImageIndex < arrangedImages.length - 1) {
+      modalCarouselRef.current.snapToNext();
+      setModalImageIndex(modalImageIndex + 1);
+    }
+  };
+
+  // Navigate to previous image in modal carousel
+  const goToPrevModalImage = () => {
+    if (modalCarouselRef.current && modalImageIndex > 0) {
+      modalCarouselRef.current.snapToPrev();
+      setModalImageIndex(modalImageIndex - 1);
+    }
+  };
+  
+  // Handle share listing
+  const handleShareListing = async () => {
+    try {
+      const shareUrl = `https://listtra.com/listings/${slug}/${product_id}`;
+      const shareText = `Check out this listing: ${title}`;
+      
+      const shareOptions = Platform.OS === 'ios' 
+        ? {
+            message: shareText,
+            url: shareUrl,
+            title: `Listtra: ${title}`
+          } 
+        : {
+            message: `${shareText} - ${shareUrl}`,
+            title: `Listtra: ${title}`
+          };
+      
+      const result = await Share.share(shareOptions);
+      
+      if (result.action === Share.sharedAction) {
+        if (result.activityType) {
+          // shared with activity type of result.activityType
+          console.log('Shared with activity type:', result.activityType);
+        } else {
+          // shared
+          console.log('Shared successfully');
+        }
+      } else if (result.action === Share.dismissedAction) {
+        // dismissed
+        console.log('Share dismissed');
+      }
+    } catch (error) {
+      console.error('Error sharing listing:', error);
+      Alert.alert('Error', 'Failed to share listing');
+    }
   };
   
   // Show loading spinner while initializing or loading data
@@ -394,15 +638,15 @@ export default function ListingDetailScreen() {
     seller_name,
   } = listingData;
   
-  // Format listing date
-  const listingDate = new Date(created_at).toLocaleDateString();
-  
-  // Status text
-  const getStatusText = () => {
+  // Get status display text
+  const getStatusDisplayText = (status: string) => {
     switch (status) {
-      case 'sold': return 'Sold';
-      case 'pending': return 'Pending pickup';
-      default: return 'Available';
+      case 'pending':
+        return 'Pending pickup';
+      case 'sold':
+        return 'Sold';
+      default:
+        return 'Available';
     }
   };
   
@@ -411,48 +655,52 @@ export default function ListingDetailScreen() {
       <StatusBar barStyle="dark-content" />
       <Stack.Screen 
         options={{
-          title: '',
           headerShown: false,
+          title: "",  // Set empty title just in case
+          headerShadowVisible: false,
+          headerTransparent: true, // Make transparent as fallback
+          animation: 'slide_from_right',
+          presentation: 'modal',
         }} 
       />
       
-      {/* Like button (top right) */}
-      <TouchableOpacity 
-        style={styles.likeButton}
-        onPress={toggleLike}
-      >
-        <View style={styles.likeButtonInner}>
-          <AntDesign
-            name={isLiked ? "heart" : "hearto"}
-            size={22}
-            color={isLiked ? "red" : PRIMARY_COLOR}
-          />
-        </View>
-      </TouchableOpacity>
-      
-      {/* Back button and Edit button (if owner) */}
+      {/* Back button and title */}
       <View style={styles.header}>
         <TouchableOpacity 
           style={styles.backButtonCircle}
           onPress={() => router.back()}
         >
-          <Feather name="chevron-left" size={26} color={PRIMARY_COLOR} />
+          <Ionicons name="chevron-back" size={24} color="#000" />
         </TouchableOpacity>
         
+        {/* Edit button (only for owner) */}
         {isOwner && (
-          <View style={styles.editButtonContainer}>
-            <TouchableOpacity 
-              style={styles.editButton}
-              onPress={handleEditListing}
-            >
-              <FontAwesome name="edit" size={16} color="white" style={styles.editIcon} />
-              <Text style={styles.editButtonText}>Edit</Text>
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity 
+            style={styles.editButton}
+            onPress={handleEditListing}
+          >
+            <Ionicons name="create-outline" size={18} color="#FFF" />
+            <Text style={styles.editButtonText}>Edit</Text>
+          </TouchableOpacity>
         )}
       </View>
       
+      {/* Like button (top right) */}
+      <TouchableOpacity 
+        style={styles.likeButtonTopRight}
+        onPress={toggleLike}
+      >
+        <View style={styles.actionButton}>
+          <AntDesign
+            name={isLiked ? "heart" : "hearto"}
+            size={24}
+            color={isLiked ? "red" : "#000"}
+          />
+        </View>
+      </TouchableOpacity>
+      
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+        {/* Image carousel */}
         <View style={styles.carouselContainer}>
           {arrangedImages.length > 0 ? (
             <View>
@@ -463,37 +711,33 @@ export default function ListingDetailScreen() {
                 sliderWidth={SCREEN_WIDTH}
                 itemWidth={SCREEN_WIDTH}
                 onSnapToItem={(index: number) => setActiveSlide(index)}
-                autoplay={arrangedImages.length > 1}
-                autoplayDelay={3000}
-                autoplayInterval={5000}
-                loop={arrangedImages.length > 1}
+                inactiveSlideScale={1}
+                loop={false}
                 vertical={false}
               />
               
               {/* Carousel navigation arrows */}
               {arrangedImages.length > 1 && (
                 <>
-                  <TouchableOpacity 
-                    style={styles.carouselArrowLeft}
-                    onPress={() => {
-                      if (carouselRef.current) {
-                        carouselRef.current.snapToPrev();
-                      }
-                    }}
-                  >
-                    <Feather name="chevron-left" size={22} color={PRIMARY_COLOR} />
-                  </TouchableOpacity>
+                  {/* Left arrow */}
+                  {activeSlide > 0 && (
+                    <TouchableOpacity 
+                      style={[styles.carouselArrow, styles.carouselArrowLeft]}
+                      onPress={goToPrevImage}
+                    >
+                      <Ionicons name="chevron-back" size={24} color="#fff" />
+                    </TouchableOpacity>
+                  )}
                   
-                  <TouchableOpacity 
-                    style={styles.carouselArrowRight}
-                    onPress={() => {
-                      if (carouselRef.current) {
-                        carouselRef.current.snapToNext();
-                      }
-                    }}
-                  >
-                    <Feather name="chevron-right" size={22} color={PRIMARY_COLOR} />
-                  </TouchableOpacity>
+                  {/* Right arrow */}
+                  {activeSlide < arrangedImages.length - 1 && (
+                    <TouchableOpacity 
+                      style={[styles.carouselArrow, styles.carouselArrowRight]}
+                      onPress={goToNextImage}
+                    >
+                      <Ionicons name="chevron-forward" size={24} color="#fff" />
+                    </TouchableOpacity>
+                  )}
                 </>
               )}
               
@@ -501,20 +745,32 @@ export default function ListingDetailScreen() {
               {arrangedImages.length > 1 && (
                 <View style={styles.pagination}>
                   {arrangedImages.map((_, index) => (
-                    <View
+                    <TouchableOpacity
                       key={index}
                       style={[
                         styles.paginationDot,
-                        { backgroundColor: index === activeSlide ? PRIMARY_COLOR : '#ddd' }
+                        { opacity: index === activeSlide ? 1 : 0.4 }
                       ]}
+                      onPress={() => {
+                        if (carouselRef.current) {
+                          carouselRef.current.snapToItem(index);
+                        }
+                      }}
                     />
                   ))}
                 </View>
               )}
               
               {/* Status badge */}
-              <View style={styles.statusBadge}>
-                <Text style={styles.statusText}>{getStatusText()}</Text>
+              <View style={[
+                styles.statusBadge,
+                status === 'pending' ? styles.pendingStatusBadge : 
+                status === 'sold' ? styles.soldStatusBadge : 
+                styles.availableStatusBadge
+              ]}>
+                <Text style={styles.statusText}>
+                  {getStatusDisplayText(status)}
+                </Text>
               </View>
             </View>
           ) : (
@@ -525,41 +781,28 @@ export default function ListingDetailScreen() {
         </View>
         
         <View style={styles.detailsContainer}>
+          {/* Title */}
           <Text style={styles.title}>{title}</Text>
           
+          {/* Price */}
           <Text style={styles.price}>${price}</Text>
           
+          {/* Condition */}
           <View style={styles.infoRow}>
-            <MaterialIcons name="verified" size={16} color="#555" />
+            <MaterialIcons name="verified-user" size={18} color="#444" />
             <Text style={styles.infoText}>{formatCondition(condition)}</Text>
           </View>
           
+          {/* Location */}
           <View style={styles.infoRow}>
-            <Ionicons name="location-outline" size={16} color="#555" />
+            <Ionicons name="location-outline" size={18} color="#444" />
             <Text style={styles.infoText}>{location}</Text>
           </View>
           
+          {/* Description section */}
           <View style={styles.descriptionContainer}>
             <Text style={styles.sectionTitle}>Description</Text>
             <Text style={styles.description}>{description}</Text>
-          </View>
-          
-          <View style={styles.sellerContainer}>
-            <View>
-              <Text style={styles.sectionTitle}>Seller</Text>
-              <View style={styles.infoRow}>
-                <MaterialCommunityIcons name="account-outline" size={18} color={PRIMARY_COLOR} />
-                <Text style={styles.sellerName}>{seller_name}</Text>
-              </View>
-            </View>
-            
-            <View>
-              <Text style={styles.sectionTitle}>Listed on</Text>
-              <View style={styles.infoRow}>
-                <MaterialIcons name="calendar-today" size={16} color={PRIMARY_COLOR} />
-                <Text style={styles.date}>{listingDate}</Text>
-              </View>
-            </View>
           </View>
         </View>
       </ScrollView>
@@ -568,78 +811,57 @@ export default function ListingDetailScreen() {
       <View style={styles.footerContainer}>
         {isOwner ? (
           <View style={styles.ownerActionsContainer}>
-            <View style={styles.chatButtonRow}>
-              <TouchableOpacity
-                style={styles.viewChatsButton}
-                onPress={handleViewChats}
-                disabled={updateStatusLoading}
-              >
-                <Text style={styles.viewChatsButtonText}>View all chats</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity
-                style={styles.chatIconButton}
-                onPress={handleViewChats}
-              >
-                <MaterialIcons name="chat" size={20} color={PRIMARY_COLOR} />
-              </TouchableOpacity>
-            </View>
-            
-            <View style={styles.statusButtonsContainer}>
-              {status === 'available' && (
-                <>
-                  <TouchableOpacity
-                    style={styles.statusButton}
-                    onPress={() => updateListingStatus('pending')}
-                    disabled={updateStatusLoading}
-                  >
-                    <Text style={styles.statusButtonText}>Pending pickup</Text>
-                  </TouchableOpacity>
-                  
-                  <TouchableOpacity
-                    style={styles.statusButton}
-                    onPress={() => updateListingStatus('sold')}
-                    disabled={updateStatusLoading}
-                  >
-                    <Text style={styles.statusButtonText}>Mark as Sold</Text>
-                  </TouchableOpacity>
-                </>
-              )}
-              
-              {status === 'pending' && (
-                <>
-                  <TouchableOpacity
-                    style={[styles.statusButton, styles.primaryButton]}
-                    onPress={() => updateListingStatus('available')}
-                    disabled={updateStatusLoading}
-                  >
-                    <Text style={[styles.statusButtonText, styles.primaryButtonText]}>
-                      Cancel Pending
-                    </Text>
-                  </TouchableOpacity>
-                  
-                  <TouchableOpacity
-                    style={styles.statusButton}
-                    onPress={() => updateListingStatus('sold')}
-                    disabled={updateStatusLoading}
-                  >
-                    <Text style={styles.statusButtonText}>Mark as Sold</Text>
-                  </TouchableOpacity>
-                </>
-              )}
-              
-              {status === 'sold' && (
+            {/* Status specific action buttons */}
+            {status === 'pending' ? (
+              <View style={styles.ownerStatusActionsRow}>
                 <TouchableOpacity
-                  style={[styles.statusButton, styles.primaryButton]}
+                  style={styles.cancelPendingButton}
                   onPress={() => updateListingStatus('available')}
-                  disabled={updateStatusLoading}
                 >
-                  <Text style={[styles.statusButtonText, styles.primaryButtonText]}>
-                    Cancel Sold
-                  </Text>
+                  <Text style={styles.cancelPendingButtonText}>Cancel Pending</Text>
                 </TouchableOpacity>
-              )}
-            </View>
+                
+                <TouchableOpacity
+                  style={styles.markAsSoldButton}
+                  onPress={() => updateListingStatus('sold')}
+                >
+                  <Text style={styles.markAsSoldButtonText}>Mark as Sold</Text>
+                </TouchableOpacity>
+              </View>
+            ) : status === 'available' ? (
+              <View style={styles.ownerStatusActionsRow}>
+                <TouchableOpacity
+                  style={styles.pendingPickupButton}
+                  onPress={() => updateListingStatus('pending')}
+                >
+                  <Text style={styles.pendingPickupButtonText}>Pending pickup</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity
+                  style={styles.markAsSoldButton}
+                  onPress={() => updateListingStatus('sold')}
+                >
+                  <Text style={styles.markAsSoldButtonText}>Mark as Sold</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={styles.cancelSoldButton}
+                onPress={() => updateListingStatus('available')}
+              >
+                <Text style={styles.cancelPendingButtonText}>Cancel Sold</Text>
+              </TouchableOpacity>
+            )}
+            
+            {/* View chats button */}
+            <TouchableOpacity
+              style={styles.viewChatsButton}
+              onPress={handleViewChats}
+            >
+              <Text style={styles.viewChatsButtonText}>
+                View all chats
+              </Text>
+            </TouchableOpacity>
           </View>
         ) : (
           <View style={styles.buyerActionsContainer}>
@@ -650,12 +872,21 @@ export default function ListingDetailScreen() {
               <Text style={styles.makeOfferButtonText}>Make Offer</Text>
             </TouchableOpacity>
             
-            <TouchableOpacity
-              style={styles.chatIconButton}
-              onPress={handleStartChat}
-            >
-              <MaterialIcons name="chat" size={24} color={PRIMARY_COLOR} />
-            </TouchableOpacity>
+            <View style={styles.buyerSecondaryActions}>
+              <TouchableOpacity
+                style={styles.actionButtonFooter}
+                onPress={handleShareListing}
+              >
+                <Ionicons name="share-outline" size={22} color="#000" />
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                style={styles.actionButtonFooter}
+                onPress={handleStartChat}
+              >
+                <Ionicons name="chatbubble-outline" size={22} color="#000" />
+              </TouchableOpacity>
+            </View>
           </View>
         )}
       </View>
@@ -675,49 +906,66 @@ export default function ListingDetailScreen() {
             <AntDesign name="close" size={24} color="white" />
           </TouchableOpacity>
           
-          <Carousel
-            ref={modalCarouselRef}
-            data={arrangedImages}
-            renderItem={renderModalCarouselItem}
-            sliderWidth={SCREEN_WIDTH}
-            itemWidth={SCREEN_WIDTH}
-            firstItem={modalImageIndex}
-            inactiveSlideScale={1}
-            inactiveSlideOpacity={1}
-            vertical={false}
-          />
-          
-          {/* Thumbnail carousel */}
-          {arrangedImages.length > 1 && (
-            <View style={styles.thumbnailContainer}>
-              <FlatList
-                horizontal
-                data={arrangedImages}
-                keyExtractor={(_, index) => `thumb-${index}`}
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.thumbnailList}
-                renderItem={({ item, index }) => (
-                  <TouchableOpacity
-                    onPress={() => {
-                      if (modalCarouselRef.current) {
-                        modalCarouselRef.current.snapToItem(index);
-                      }
-                    }}
-                    style={[
-                      styles.thumbnail,
-                      modalImageIndex === index && styles.activeThumbnail
-                    ]}
+          <View style={styles.modalMainContent}>
+            <Carousel
+              ref={modalCarouselRef}
+              data={arrangedImages}
+              renderItem={renderModalCarouselItem}
+              sliderWidth={SCREEN_WIDTH}
+              itemWidth={SCREEN_WIDTH}
+              firstItem={modalImageIndex}
+              inactiveSlideScale={1}
+              inactiveSlideOpacity={1}
+              vertical={false}
+              onSnapToItem={(index: number) => setModalImageIndex(index)}
+            />
+            
+            {/* Modal navigation arrows */}
+            {arrangedImages.length > 1 && (
+              <>
+                {/* Left arrow */}
+                {modalImageIndex > 0 && (
+                  <TouchableOpacity 
+                    style={[styles.modalArrow, styles.modalArrowLeft]}
+                    onPress={goToPrevModalImage}
                   >
-                    <Image
-                      source={{ uri: getImageUrl(item) }}
-                      style={styles.thumbnailImage}
-                      resizeMode="cover"
-                    />
+                    <Ionicons name="chevron-back" size={28} color="#fff" />
                   </TouchableOpacity>
                 )}
-              />
+                
+                {/* Right arrow */}
+                {modalImageIndex < arrangedImages.length - 1 && (
+                  <TouchableOpacity 
+                    style={[styles.modalArrow, styles.modalArrowRight]}
+                    onPress={goToNextModalImage}
+                  >
+                    <Ionicons name="chevron-forward" size={28} color="#fff" />
+                  </TouchableOpacity>
+                )}
+              </>
+            )}
+          </View>
+          
+          <View style={styles.modalFooter}>
+            {/* Image counter */}
+            <View style={styles.imageCounter}>
+              <Text style={styles.imageCounterText}>
+                {modalImageIndex + 1} / {arrangedImages.length}
+              </Text>
             </View>
-          )}
+            
+            {/* Thumbnail gallery */}
+            {arrangedImages.length > 1 && (
+              <ScrollView 
+                horizontal 
+                showsHorizontalScrollIndicator={false}
+                style={styles.thumbnailContainer}
+                contentContainerStyle={styles.thumbnailContentContainer}
+              >
+                {arrangedImages.map((image, index) => renderThumbnailItem(image, index))}
+              </ScrollView>
+            )}
+          </View>
         </View>
       </Modal>
     </SafeAreaView>
@@ -732,6 +980,7 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
     paddingHorizontal: 16,
     paddingTop: Platform.OS === 'ios' ? 10 : 50,
     position: 'absolute',
@@ -741,9 +990,9 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   backButtonCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: 'white',
     alignItems: 'center',
     justifyContent: 'center',
@@ -753,38 +1002,13 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
-  editButtonContainer: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  editButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: PRIMARY_COLOR,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  editIcon: {
-    marginRight: 4,
-  },
-  editButtonText: {
-    color: 'white',
-    fontFamily: 'Manrope_500Medium',
-    fontSize: 14,
-  },
-  likeButton: {
+  likeButtonTopRight: {
     position: 'absolute',
-    top: Platform.OS === 'ios' ? 20 : 50,
+    top: Platform.OS === 'ios' ? 10 : 50,
     right: 16,
-    zIndex: 100,
+    zIndex: 10,
   },
-  likeButtonInner: {
+  actionButton: {
     width: 40,
     height: 40,
     borderRadius: 20,
@@ -828,78 +1052,73 @@ const styles = StyleSheet.create({
   },
   backButtonText: {
     color: 'white',
-    fontFamily: 'Manrope_500Medium',
+    fontFamily: 'Manrope_600SemiBold',
   },
   carouselContainer: {
     position: 'relative',
+    backgroundColor: '#f8f8f8',
     marginTop: 0,
+    height: 320,
   },
   carouselItem: {
     width: SCREEN_WIDTH,
-    height: 280,
+    height: 320,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f8f9fa',
+    backgroundColor: '#f8f8f8',
+  },
+  imageContainer: {
+    width: SCREEN_WIDTH * 0.85,
+    height: 280,
+    backgroundColor: 'white',
+    borderRadius: 8,
+    overflow: 'hidden',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
   },
   carouselImage: {
-    width: '100%',
-    height: '100%',
+    width: '90%',
+    height: '90%',
+  },
+  carouselArrow: {
+    position: 'absolute',
+    top: '50%',
+    marginTop: -20,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
   },
   carouselArrowLeft: {
-    position: 'absolute',
-    top: '50%',
     left: 10,
-    transform: [{ translateY: -18 }],
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'white',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 3,
-    zIndex: 10,
   },
   carouselArrowRight: {
-    position: 'absolute',
-    top: '50%',
     right: 10,
-    transform: [{ translateY: -18 }],
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'white',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 3,
-    zIndex: 10,
   },
   pagination: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    position: 'absolute',
-    bottom: 8,
-    left: 0,
-    right: 0,
+    marginVertical: 10,
   },
   paginationDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
     marginHorizontal: 4,
-    backgroundColor: '#ddd',
+    backgroundColor: PRIMARY_COLOR,
   },
   noImageContainer: {
     width: SCREEN_WIDTH,
-    height: 280,
+    height: 320,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#f8f9fa',
@@ -911,99 +1130,142 @@ const styles = StyleSheet.create({
   },
   statusBadge: {
     position: 'absolute',
-    bottom: 8,
-    right: 0,
+    bottom: 16,
+    right: 16,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+  },
+  availableStatusBadge: {
     backgroundColor: PRIMARY_COLOR,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderTopLeftRadius: 16,
-    borderBottomLeftRadius: 16,
+  },
+  pendingStatusBadge: {
+    backgroundColor: '#ff9800',
+  },
+  soldStatusBadge: {
+    backgroundColor: '#f44336',
   },
   statusText: {
     color: 'white',
-    fontFamily: 'Manrope_400Regular',
-    fontSize: 12,
+    fontFamily: 'Manrope_600SemiBold',
+    fontSize: 14,
   },
   detailsContainer: {
     padding: 16,
-    marginTop: 12,
+    marginTop: 8,
   },
   title: {
     fontSize: 22,
     fontFamily: 'Manrope_700Bold',
-    color: '#333',
-    marginBottom: 8,
+    color: '#000',
+    marginBottom: 12,
   },
   price: {
-    fontSize: 20,
-    fontFamily: 'Manrope_600SemiBold',
+    fontSize: 24,
+    fontFamily: 'Manrope_700Bold',
     color: PRIMARY_COLOR,
-    marginBottom: 12,
+    marginBottom: 16,
   },
   infoRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 12,
   },
   infoText: {
-    fontSize: 14,
-    color: '#555',
-    marginLeft: 8,
+    fontSize: 15,
+    color: '#444',
+    marginLeft: 10,
     fontFamily: 'Manrope_400Regular',
   },
   descriptionContainer: {
-    marginTop: 16,
+    marginTop: 20,
     marginBottom: 16,
   },
   sectionTitle: {
-    fontSize: 16,
+    fontSize: 18,
     fontFamily: 'Manrope_700Bold',
-    color: '#333',
-    marginBottom: 8,
+    color: '#000',
+    marginBottom: 10,
   },
   description: {
-    fontSize: 14,
-    color: '#666',
-    lineHeight: 20,
-    fontFamily: 'Manrope_400Regular',
-  },
-  sellerContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginTop: 8,
-    marginBottom: 16,
-  },
-  sellerName: {
-    fontSize: 14,
-    color: PRIMARY_COLOR,
-    marginLeft: 8,
-    fontFamily: 'Manrope_400Regular',
-  },
-  date: {
-    fontSize: 14,
-    color: PRIMARY_COLOR,
-    marginLeft: 8,
+    fontSize: 15,
+    color: '#444',
+    lineHeight: 22,
     fontFamily: 'Manrope_400Regular',
   },
   footerContainer: {
     padding: 16,
+    paddingBottom: Platform.OS === 'ios' ? 30 : 16,
     borderTopWidth: 1,
     borderTopColor: '#eee',
     backgroundColor: 'white',
   },
   ownerActionsContainer: {
-    gap: 16,
-  },
-  chatButtonRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
     gap: 12,
   },
-  viewChatsButton: {
+  ownerStatusActionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 12,
+  },
+  cancelPendingButton: {
     flex: 1,
     backgroundColor: PRIMARY_COLOR,
-    paddingVertical: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelPendingButtonText: {
+    color: 'white',
+    fontFamily: 'Manrope_600SemiBold',
+    fontSize: 16,
+  },
+  markAsSoldButton: {
+    flex: 1,
+    backgroundColor: 'white',
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: PRIMARY_COLOR,
+  },
+  markAsSoldButtonText: {
+    color: PRIMARY_COLOR,
+    fontFamily: 'Manrope_600SemiBold',
+    fontSize: 16,
+  },
+  pendingPickupButton: {
+    flex: 1,
+    backgroundColor: 'white',
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: PRIMARY_COLOR,
+  },
+  pendingPickupButtonText: {
+    color: PRIMARY_COLOR,
+    fontFamily: 'Manrope_600SemiBold',
+    fontSize: 16,
+  },
+  cancelSoldButton: {
+    backgroundColor: PRIMARY_COLOR,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  viewChatsButton: {
+    backgroundColor: PRIMARY_COLOR,
+    paddingVertical: 14,
     paddingHorizontal: 20,
     borderRadius: 8,
     alignItems: 'center',
@@ -1014,66 +1276,29 @@ const styles = StyleSheet.create({
     fontFamily: 'Manrope_600SemiBold',
     fontSize: 16,
   },
-  chatIconButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 8,
-    backgroundColor: 'white',
-    borderWidth: 1,
-    borderColor: '#eee',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  statusButtonsContainer: {
+  editButton: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  statusButton: {
-    flex: 1,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: PRIMARY_COLOR,
     alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: PRIMARY_COLOR,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
   },
-  statusButtonText: {
-    color: PRIMARY_COLOR,
+  editButtonText: {
+    color: 'white',
     fontFamily: 'Manrope_600SemiBold',
     fontSize: 14,
-  },
-  primaryButton: {
-    backgroundColor: PRIMARY_COLOR,
-    borderColor: PRIMARY_COLOR,
-  },
-  primaryButtonText: {
-    color: 'white',
-  },
-  buyerActionsContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  makeOfferButton: {
-    flex: 1,
-    backgroundColor: PRIMARY_COLOR,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  makeOfferButtonText: {
-    color: 'white',
-    fontFamily: 'Manrope_600SemiBold',
-    fontSize: 16,
+    marginLeft: 4,
   },
   modalContainer: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.9)',
-    justifyContent: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.95)',
+    justifyContent: 'space-between',
+    paddingVertical: 40,
   },
   modalCloseButton: {
     position: 'absolute',
@@ -1087,38 +1312,124 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  modalMainContent: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
+    paddingVertical: 20,
+  },
   modalCarouselItem: {
     width: SCREEN_WIDTH,
     height: SCREEN_WIDTH,
     justifyContent: 'center',
     alignItems: 'center',
   },
+  modalImageContainer: {
+    width: SCREEN_WIDTH * 0.9,
+    height: SCREEN_WIDTH * 0.9,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'transparent',
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
   modalCarouselImage: {
-    width: '90%',
-    height: '90%',
+    width: '95%',
+    height: '95%',
+  },
+  modalArrow: {
+    position: 'absolute',
+    top: '50%',
+    marginTop: -24,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  modalArrowLeft: {
+    left: 15,
+  },
+  modalArrowRight: {
+    right: 15,
+  },
+  modalFooter: {
+    width: '100%',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  imageCounter: {
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    marginBottom: 20,
+  },
+  imageCounterText: {
+    color: 'white',
+    fontFamily: 'Manrope_500Medium',
+    fontSize: 14,
   },
   thumbnailContainer: {
+    width: '100%',
     height: 80,
-    marginTop: 10,
+    maxWidth: SCREEN_WIDTH * 0.9,
   },
-  thumbnailList: {
+  thumbnailContentContainer: {
     paddingHorizontal: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  thumbnail: {
+  thumbnailItem: {
     width: 60,
     height: 60,
     marginHorizontal: 5,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: '#888',
+    borderRadius: 6,
     overflow: 'hidden',
-  },
-  activeThumbnail: {
-    borderColor: PRIMARY_COLOR,
     borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  thumbnailItemActive: {
+    borderColor: PRIMARY_COLOR,
   },
   thumbnailImage: {
     width: '100%',
     height: '100%',
+  },
+  buyerActionsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  makeOfferButton: {
+    flex: 1,
+    backgroundColor: PRIMARY_COLOR,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  makeOfferButtonText: {
+    color: 'white',
+    fontFamily: 'Manrope_600SemiBold',
+    fontSize: 16,
+  },
+  buyerSecondaryActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  actionButtonFooter: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'white',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#ddd',
   },
 }); 
