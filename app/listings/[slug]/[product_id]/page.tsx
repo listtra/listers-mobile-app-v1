@@ -979,10 +979,11 @@ const styles = StyleSheet.create({
   },
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
+    gap: 10,
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingTop: Platform.OS === 'ios' ? 10 : 50,
+    paddingTop: Platform.OS === 'ios' ? 30 : 30,
     position: 'absolute',
     top: 0,
     left: 0,
@@ -1004,7 +1005,7 @@ const styles = StyleSheet.create({
   },
   likeButtonTopRight: {
     position: 'absolute',
-    top: Platform.OS === 'ios' ? 10 : 50,
+    top: Platform.OS === 'ios' ? 30 : 30,
     right: 16,
     zIndex: 10,
   },

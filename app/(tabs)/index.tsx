@@ -130,7 +130,7 @@ export default function ListingsScreen() {
       
       // Handle auth status
       if (data.type === 'AUTH_STATUS') {
-        console.log('Auth status from WebView:', data.isAuthenticated);
+        //console.log('Auth status from WebView:', data.isAuthenticated);
         
         // If WebView reports not authenticated but we have tokens, inject them again
         if (!data.isAuthenticated && isAuthenticated && tokens.accessToken) {

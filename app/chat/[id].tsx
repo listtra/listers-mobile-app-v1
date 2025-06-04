@@ -53,6 +53,7 @@ export default function ChatDetailScreen() {
   // Refs
   const bottomListRef = useRef<any>(null);
   const refreshIntervalRef = useRef<any>(null);
+  const inputRef = useRef<TextInput>(null);
   
   // Check if user is buyer
   const isBuyer = user?.id !== conversation?.listing?.seller_id;
@@ -67,6 +68,9 @@ export default function ChatDetailScreen() {
     "When can I see it?",
     "Can you share the location?",
   ];
+  
+  // Add common emojis
+  const commonEmojis = ["😊", "👍", "👋", "🙏", "😀", "❤️", "👌", "🔥", "👏", "🎉", "👀", "💯", "👁️", "👉", "😂", "🤔", "😍", "🙌", "💪", "✅"];
   
   // Fetch conversation and messages
   useEffect(() => {
@@ -171,7 +175,9 @@ export default function ChatDetailScreen() {
   useEffect(() => {
     if (processedMessages.length > 0 && bottomListRef.current) {
       setTimeout(() => {
-        bottomListRef.current.scrollToEnd({ animated: true });
+        if (bottomListRef.current) {
+          bottomListRef.current.scrollToEnd({ animated: true });
+        }
       }, 300);
     }
   }, [processedMessages]);
@@ -756,9 +762,16 @@ export default function ChatDetailScreen() {
                   disabled={!offerAmount || isNaN(parseFloat(offerAmount)) || parseFloat(offerAmount) <= 0 || isUpdatingOffer}
                   onPress={() => sendMessage(true, offerAmount)}
                 >
-                  <Text style={styles.offerButtonText}>
-                    {isUpdatingOffer ? 'Updating...' : (showOfferInput ? 'Modify Offer' : 'Make Offer')}
-                  </Text>
+                  {isUpdatingOffer ? (
+                    <View style={{flexDirection: 'row', alignItems: 'center'}}>
+                      <ActivityIndicator size="small" color="#fff" style={{marginRight: 5}} />
+                      <Text style={styles.offerButtonText}>Updating...</Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.offerButtonText}>
+                      {showOfferInput ? 'Update Offer' : 'Make Offer'}
+                    </Text>
+                  )}
                 </TouchableOpacity>
                 {showOfferInput && (
                   <TouchableOpacity
@@ -782,9 +795,14 @@ export default function ChatDetailScreen() {
                   disabled={isCancellingOffer}
                   onPress={() => cancelOffer(pendingOffer.id)}
                 >
-                  <Text style={styles.cancelOfferText}>
-                    {isCancellingOffer ? 'Cancelling...' : 'Cancel Offer'}
-                  </Text>
+                  {isCancellingOffer ? (
+                    <View style={{flexDirection: 'row', alignItems: 'center', justifyContent: 'center'}}>
+                      <ActivityIndicator size="small" color="#666" style={{marginRight: 5}} />
+                      <Text style={styles.cancelOfferText}>Cancelling...</Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.cancelOfferText}>Cancel Offer</Text>
+                  )}
                 </TouchableOpacity>
                 
                 <View style={styles.offerAmountBadge}>
@@ -833,6 +851,18 @@ export default function ChatDetailScreen() {
                     item.offer.status === 'Cancelled' ? styles.cancelledStatusBadge :
                     styles.pendingStatusBadge
                   ]}>
+                    {item.offer.status === 'Pending' && (
+                      <Ionicons name="time-outline" size={16} color="#F57C00" />
+                    )}
+                    {item.offer.status === 'Accepted' && (
+                      <Ionicons name="checkmark" size={16} color="#4CAF50" />
+                    )}
+                    {item.offer.status === 'Rejected' && (
+                      <Ionicons name="close" size={16} color="#F44336" />
+                    )}
+                    {item.offer.status === 'Cancelled' && (
+                      <Ionicons name="close-circle-outline" size={16} color="#9E9E9E" />
+                    )}
                     <Text style={[
                       styles.offerStatusText,
                       item.offer.status === 'Accepted' ? styles.acceptedStatusText :
@@ -852,7 +882,7 @@ export default function ChatDetailScreen() {
                         onPress={() => respondToOffer(item.offer.id, 'Accept')}
                       >
                         <Text style={styles.acceptOfferText}>Accept Offer</Text>
-        </TouchableOpacity>
+                      </TouchableOpacity>
                       <TouchableOpacity 
                         style={styles.rejectOfferButton}
                         onPress={() => respondToOffer(item.offer.id, 'Reject')}
@@ -864,7 +894,7 @@ export default function ChatDetailScreen() {
                   <Text style={styles.messageTimestamp}>{formatTimestamp(item.created_at)}</Text>
                 </View>
 
-                {/* Review Seller button for accepted offers, buyer side, not yet reviewed */}
+                {/* Review Seller button for accepted offers */}
                 {item.offer.status === 'Accepted' && isBuyer && !hasReviewed && 
                   conversation?.listing?.status === "sold" && (
                   <TouchableOpacity 
@@ -941,34 +971,90 @@ export default function ChatDetailScreen() {
               <TouchableOpacity 
                 style={styles.quickReplyButton}
                 onPress={() => {
+                  // Close emoji picker if open
+                  setShowEmojiPicker(false);
+                  
+                  // Update the input text directly
                   setInput(item);
+                  
+                  // Force update in case of any race conditions
+                  setTimeout(() => {
+                    if (inputRef.current) {
+                      // Focus the input
+                      inputRef.current.focus();
+                    }
+                  }, 100);
                 }}
               >
                 <Text style={styles.quickReplyText}>{item}</Text>
               </TouchableOpacity>
             )}
-      />
-    </View>
+          />
+        </View>
+      )}
+      
+      {/* Emoji Picker */}
+      {showEmojiPicker && (
+        <View style={styles.emojiPickerContainer}>
+          <View style={styles.emojiPickerHeader}>
+            <Text style={styles.emojiPickerTitle}>Emojis</Text>
+            <TouchableOpacity onPress={() => setShowEmojiPicker(false)}>
+              <Feather name="x" size={20} color="#999" />
+            </TouchableOpacity>
+          </View>
+          <View style={styles.emojiGrid}>
+            {commonEmojis.map((emoji) => (
+              <TouchableOpacity 
+                key={emoji}
+                style={styles.emojiButton}
+                onPress={() => {
+                  const newText = input + emoji;
+                  setInput(newText);
+                  
+                  // Focus the input after emoji selection
+                  if (inputRef.current) {
+                    inputRef.current.focus();
+                  }
+                }}
+              >
+                <Text style={styles.emojiText}>{emoji}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
       )}
       
       {/* Message Input */}
       <View style={styles.inputContainer}>
         <TouchableOpacity 
-          style={styles.emojiButton}
-          onPress={() => setShowEmojiPicker(!showEmojiPicker)}
+          style={styles.emojiToggleButton}
+          onPress={() => {
+            setShowEmojiPicker(!showEmojiPicker);
+            setShowQuickReplies(false);
+          }}
         >
           <Ionicons name="happy-outline" size={24} color="#2528be" />
         </TouchableOpacity>
         
         <TextInput
+          ref={inputRef}
           style={styles.messageInput}
           value={input}
-          onChangeText={setInput}
+          onChangeText={(text) => {
+            // Update the input state
+            setInput(text);
+          }}
           placeholder="Message"
           placeholderTextColor="#999"
           multiline
-          onFocus={() => setShowQuickReplies(true)}
-          onBlur={() => setTimeout(() => setShowQuickReplies(false), 200)}
+          onFocus={() => {
+            // Show quick replies when focused
+            setShowQuickReplies(true);
+            // Hide emoji picker when input is focused
+            setShowEmojiPicker(false);
+          }}
+          // Keep quick replies visible for a little longer
+          onBlur={() => setTimeout(() => setShowQuickReplies(false), 500)}
         />
         
         <TouchableOpacity 
@@ -980,23 +1066,6 @@ export default function ChatDetailScreen() {
           onPress={() => sendMessage()}
         >
           <Feather name="send" size={20} color="white" />
-        </TouchableOpacity>
-      </View>
-      
-      {/* Bottom Action Buttons */}
-      <View style={styles.bottomActionContainer}>
-        <TouchableOpacity 
-          style={styles.actionButton}
-          onPress={() => setInput("What's the best price?")}
-        >
-          <Text style={styles.actionButtonText}>What's the best price?</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={styles.actionButton}
-          onPress={() => setInput("Can you send me more details?")}
-        >
-          <Text style={styles.actionButtonText}>Can you send me more details?</Text>
         </TouchableOpacity>
       </View>
       
@@ -1017,7 +1086,7 @@ export default function ChatDetailScreen() {
             
             {/* Seller avatar */}
             <View style={styles.sellerAvatar}>
-              <Feather name="user" size={32} color="white" />
+              <Feather name="user" size={36} color="white" />
             </View>
             
             {/* Seller name */}
@@ -1057,9 +1126,14 @@ export default function ChatDetailScreen() {
               onPress={submitReview}
               disabled={isSubmittingReview}
             >
-              <Text style={styles.submitReviewText}>
-                {isSubmittingReview ? "Submitting..." : "Submit"}
-              </Text>
+              {isSubmittingReview ? (
+                <View style={{flexDirection: 'row', alignItems: 'center', justifyContent: 'center'}}>
+                  <ActivityIndicator size="small" color="#fff" style={{marginRight: 8}} />
+                  <Text style={styles.submitReviewText}>Submitting...</Text>
+                </View>
+              ) : (
+                <Text style={styles.submitReviewText}>Submit</Text>
+              )}
             </TouchableOpacity>
           </View>
         </View>
@@ -1110,6 +1184,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   productHeader: {
+    backgroundColor: 'white',
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
     padding: 15,
@@ -1119,15 +1194,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   productImage: {
-    width: 60,
-    height: 60,
-    borderRadius: 8,
+    width: 64,
+    height: 64,
+    borderRadius: 12,
     marginRight: 15,
   },
   productImagePlaceholder: {
-    width: 60,
-    height: 60,
-    borderRadius: 8,
+    width: 64,
+    height: 64,
+    borderRadius: 12,
     backgroundColor: '#f5f5f5',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1143,7 +1218,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   productPrice: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '700',
     color: '#2528be',
     marginBottom: 2,
@@ -1151,6 +1226,8 @@ const styles = StyleSheet.create({
   sellerName: {
     fontSize: 14,
     color: '#666',
+    marginTop: 1,
+    fontWeight: '400',
   },
   offerContainer: {
     marginTop: 10,
@@ -1170,6 +1247,7 @@ const styles = StyleSheet.create({
     borderRadius: 25,
     paddingHorizontal: 10,
     height: 40,
+    backgroundColor: '#f5f5f5',
   },
   currencySymbol: {
     fontSize: 16,
@@ -1258,6 +1336,7 @@ const styles = StyleSheet.create({
   },
   messageList: {
     padding: 15,
+    backgroundColor: '#f5f5f5',
   },
   messageBubbleContainer: {
     marginBottom: 10,
@@ -1270,19 +1349,21 @@ const styles = StyleSheet.create({
   },
   messageBubble: {
     padding: 12,
-    borderRadius: 20,
+    borderRadius: 18,
     maxWidth: '80%',
   },
   myMessage: {
     backgroundColor: '#CBD8FF',
-    borderBottomRightRadius: 8,
+    borderBottomRightRadius: 4,
   },
   theirMessage: {
     backgroundColor: '#f1f1f1',
-    borderBottomLeftRadius: 8,
+    borderBottomLeftRadius: 4,
   },
   messageText: {
     fontSize: 15,
+    fontFamily: 'System',
+    lineHeight: 20,
   },
   messageFooter: {
     flexDirection: 'row',
@@ -1291,17 +1372,17 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   messageTimestamp: {
-    fontSize: 12,
+    fontSize: 10,
     color: '#999',
   },
   messageStatus: {
-    fontSize: 12,
+    fontSize: 10,
     color: '#999',
     marginLeft: 4,
   },
   offerBubble: {
     padding: 15,
-    borderRadius: 15,
+    borderRadius: 12,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: '#ddd',
@@ -1309,40 +1390,60 @@ const styles = StyleSheet.create({
     width: '90%',
     alignSelf: 'center',
     marginVertical: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
   },
   pendingOfferBubble: {
     borderColor: '#FFD700',
+    borderWidth: 1,
   },
   acceptedOfferBubble: {
     borderColor: '#4CAF50',
+    borderWidth: 1,
   },
   rejectedOfferBubble: {
     borderColor: '#F44336',
+    borderWidth: 1,
   },
   cancelledOfferBubble: {
     borderColor: '#9E9E9E',
+    borderWidth: 1,
   },
   offerStatusBadge: {
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 12,
     marginBottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   pendingStatusBadge: {
     backgroundColor: '#FFF9C4',
+    borderWidth: 1,
+    borderColor: '#F57C00',
   },
   acceptedStatusBadge: {
     backgroundColor: '#E8F5E9',
+    borderWidth: 1,
+    borderColor: '#4CAF50',
   },
   rejectedStatusBadge: {
     backgroundColor: '#FFEBEE',
+    borderWidth: 1,
+    borderColor: '#F44336',
   },
   cancelledStatusBadge: {
     backgroundColor: '#F5F5F5',
+    borderWidth: 1,
+    borderColor: '#9E9E9E',
   },
   offerStatusText: {
     fontSize: 12,
     fontWeight: '600',
+    marginLeft: 4,
   },
   pendingStatusText: {
     color: '#F57C00',
@@ -1360,6 +1461,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
     marginBottom: 5,
+    fontWeight: '500',
   },
   offerPrice: {
     fontSize: 20,
@@ -1381,6 +1483,7 @@ const styles = StyleSheet.create({
   acceptOfferText: {
     color: 'white',
     fontWeight: '600',
+    fontSize: 13,
   },
   rejectOfferButton: {
     backgroundColor: '#F44336',
@@ -1391,6 +1494,7 @@ const styles = StyleSheet.create({
   rejectOfferText: {
     color: 'white',
     fontWeight: '600',
+    fontSize: 13,
   },
   reviewBubble: {
     padding: 15,
@@ -1401,13 +1505,18 @@ const styles = StyleSheet.create({
     width: '80%',
     alignSelf: 'center',
     alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
   },
   starRating: {
     flexDirection: 'row',
     marginBottom: 10,
   },
   star: {
-    fontSize: 20,
+    fontSize: 22,
     marginHorizontal: 2,
   },
   filledStar: {
@@ -1420,21 +1529,24 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     marginBottom: 5,
+    color: '#2528be',
   },
   reviewText: {
     fontSize: 14,
     fontStyle: 'italic',
     textAlign: 'center',
     marginTop: 5,
+    color: '#333',
   },
   quickRepliesContainer: {
     borderTopWidth: 1,
     borderTopColor: '#eee',
     paddingVertical: 10,
+    backgroundColor: 'white',
   },
   quickRepliesList: {
     paddingHorizontal: 15,
-    gap: 10,
+    gap: 8,
   },
   quickReplyButton: {
     backgroundColor: 'white',
@@ -1443,6 +1555,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 1,
     borderColor: '#2528be',
+    marginRight: 8,
   },
   quickReplyText: {
     color: '#2528be',
@@ -1452,22 +1565,30 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 15,
-    paddingVertical: 10,
+    paddingVertical: 12,
     borderTopWidth: 1,
     borderTopColor: '#eee',
     backgroundColor: 'white',
   },
-  emojiButton: {
-    padding: 10,
+  emojiToggleButton: {
+    padding: 8,
+    marginRight: 5,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   messageInput: {
     flex: 1,
     backgroundColor: '#f5f5f5',
     borderRadius: 20,
     paddingHorizontal: 15,
-    paddingVertical: 8,
+    paddingTop: 10,
+    paddingBottom: 10,
     maxHeight: 100,
-    marginHorizontal: 10,
+    marginHorizontal: 8,
+    fontSize: 14,
+    borderWidth: 1,
+    borderColor: '#eee',
+    textAlignVertical: 'center',
   },
   sendButton: {
     backgroundColor: '#2528be',
@@ -1476,11 +1597,11 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
+    marginLeft: 5,
   },
   sendButtonDisabled: {
     backgroundColor: '#a0a0a0',
   },
-  // Review Modal styles
   modalOverlay: {
     position: 'absolute',
     top: 0,
@@ -1511,31 +1632,33 @@ const styles = StyleSheet.create({
     padding: 5,
   },
   reviewTitle: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '700',
     marginBottom: 20,
     marginTop: 10,
+    color: '#333',
   },
   sellerAvatar: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    width: 70,
+    height: 70,
+    borderRadius: 35,
     backgroundColor: '#2528be',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 15,
   },
   reviewSellerName: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '600',
     marginBottom: 20,
+    color: '#333',
   },
   ratingContainer: {
     flexDirection: 'row',
     marginBottom: 20,
   },
   ratingStar: {
-    fontSize: 30,
+    fontSize: 32,
     marginHorizontal: 5,
   },
   activeRatingStar: {
@@ -1546,19 +1669,22 @@ const styles = StyleSheet.create({
   },
   reviewInput: {
     width: '100%',
-    height: 100,
+    minHeight: 120,
     borderWidth: 1,
     borderColor: '#ddd',
-    borderRadius: 10,
-    padding: 10,
+    borderRadius: 15,
+    padding: 15,
     marginBottom: 20,
+    fontSize: 16,
+    textAlignVertical: 'top',
   },
   submitReviewButton: {
     backgroundColor: '#2528be',
     paddingVertical: 12,
     paddingHorizontal: 30,
-    borderRadius: 10,
+    borderRadius: 25,
     width: '70%',
+    alignItems: 'center',
   },
   submitReviewText: {
     color: 'white',
@@ -1577,6 +1703,11 @@ const styles = StyleSheet.create({
     marginVertical: 10,
     width: '90%',
     alignSelf: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 2,
   },
   reviewButtonText: {
     color: 'white',
@@ -1584,29 +1715,39 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginLeft: 8,
   },
-  bottomActionContainer: {
+  emojiPickerContainer: {
+    borderTopWidth: 1,
+    borderTopColor: '#eee',
+    paddingVertical: 10,
+    backgroundColor: 'white',
+    paddingBottom: 15,
+  },
+  emojiPickerHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 12,
-    backgroundColor: 'white',
-    borderTopWidth: 1,
-    borderTopColor: '#f0f0f0',
+    paddingHorizontal: 15,
+    marginBottom: 10,
   },
-  actionButton: {
-    backgroundColor: 'white',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 20,
-    flex: 1,
-    marginHorizontal: 5,
-    borderWidth: 1,
-    borderColor: '#eee',
+  emojiPickerTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+  },
+  emojiGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-start',
+    paddingHorizontal: 10,
+  },
+  emojiButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    width: '20%', // 5 emojis per row
+    justifyContent: 'center',
     alignItems: 'center',
   },
-  actionButtonText: {
-    color: '#2528be',
-    fontWeight: '600',
-    fontSize: 14,
+  emojiText: {
+    fontSize: 24,
   },
 }); 
