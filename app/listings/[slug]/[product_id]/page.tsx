@@ -1196,19 +1196,22 @@ const styles = StyleSheet.create({
   },
   footerContainer: {
     padding: 16,
-    paddingBottom: Platform.OS === 'ios' ? 30 : 16,
+    paddingBottom: Platform.OS === 'ios' ? 16 : 16,
     borderTopWidth: 1,
     borderTopColor: '#eee',
     backgroundColor: 'white',
   },
   ownerActionsContainer: {
+    borderTopRightRadius: 16,
+    borderTopLeftRadius: 16,
+    paddingBottom: 10,
     gap: 12,
   },
   ownerStatusActionsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    gap: 12,
-    marginBottom: 12,
+    gap: 10,
+    paddingBottom: 0,
   },
   cancelPendingButton: {
     flex: 1,
@@ -1403,7 +1406,8 @@ const styles = StyleSheet.create({
   buyerActionsContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
+    paddingBottom: 10,
   },
   makeOfferButton: {
     flex: 1,
