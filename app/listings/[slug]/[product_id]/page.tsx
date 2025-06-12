@@ -79,7 +79,7 @@ const toggleLikeAPI = async (
   isCurrentlyLiked: boolean,
   accessToken: string
 ) => {
-  const baseURL = 'https://backend.listtra.com';
+  const baseURL = 'http://127.0.0.1:8000';
   const endpoint = `/api/listings/${slug}/${productId}/like/`;
   const url = `${baseURL}${endpoint}`;
   
@@ -213,7 +213,7 @@ export default function ListingDetailScreen() {
       
       try {
         setIsLoading(true);
-        const url = `https://backend.listtra.com/api/listings/${product_id}/`;
+        const url = `http://127.0.0.1:8000/api/listings/${product_id}/`;
         
         const headers = tokens?.accessToken 
           ? { Authorization: `Bearer ${tokens.accessToken}` } 
@@ -258,7 +258,7 @@ export default function ListingDetailScreen() {
     
     try {
       setUpdateStatusLoading(true);
-      const url = `https://backend.listtra.com/api/listings/${slug}/${product_id}/status/`;
+      const url = `http://127.0.0.1:8000/api/listings/${slug}/${product_id}/status/`;
       
       const response = await axios.patch(
         url, 
@@ -371,7 +371,7 @@ export default function ListingDetailScreen() {
     }
     
     try {
-      const url = 'https://backend.listtra.com/api/chat/conversations/';
+      const url = 'http://127.0.0.1:8000/api/chat/conversations/';
       const response = await axios.post(
         url,
         { listing: product_id },
@@ -789,13 +789,13 @@ export default function ListingDetailScreen() {
           
           {/* Condition */}
           <View style={styles.infoRow}>
-            <MaterialIcons name="verified-user" size={18} color="#444" />
+            <MaterialIcons name="verified-user" size={18} color="#2528be" />
             <Text style={styles.infoText}>{formatCondition(condition)}</Text>
           </View>
           
           {/* Location */}
           <View style={styles.infoRow}>
-            <Ionicons name="location-outline" size={18} color="#444" />
+            <Ionicons name="location-outline" size={18} color="#2528be" />
             <Text style={styles.infoText}>{location}</Text>
           </View>
           
@@ -1156,13 +1156,13 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   title: {
-    fontSize: 22,
+    fontSize: 20,
     fontFamily: 'Manrope_700Bold',
     color: '#000',
     marginBottom: 12,
   },
   price: {
-    fontSize: 24,
+    fontSize: 20,
     fontFamily: 'Manrope_700Bold',
     color: PRIMARY_COLOR,
     marginBottom: 16,
@@ -1183,8 +1183,8 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   sectionTitle: {
-    fontSize: 18,
-    fontFamily: 'Manrope_700Bold',
+    fontSize: 17,
+    fontFamily: 'Manrope_600SemiBold',
     color: '#000',
     marginBottom: 10,
   },

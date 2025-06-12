@@ -1,11 +1,11 @@
 import { Feather, Ionicons } from '@expo/vector-icons';
 import axios from 'axios';
+import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
-  Image,
   RefreshControl,
   StyleSheet,
   Text,
@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
+import { getPlaceholderImage, optimizeCloudinaryUrl } from '../../utils/imageUtils';
 
 // Custom Header Component
 const ChatsHeader = () => {
@@ -66,7 +67,7 @@ export default function ChatsScreen() {
       };
       
       const response = await axios.get(
-        'https://backend.listtra.com/api/chat/conversations/recent/',
+        'http://127.0.0.1:8000/api/chat/conversations/recent/',
         { headers }
       );
       
@@ -176,9 +177,12 @@ export default function ChatsScreen() {
                 <View style={styles.imageContainer}>
                   {item.listing?.images?.[0]?.image_url ? (
                     <Image 
-                      source={{ uri: item.listing.images[0].image_url }} 
+                      source={{ uri: optimizeCloudinaryUrl(item.listing.images[0].image_url, 150, 80) }} 
                       style={styles.listingImage}
-                      resizeMode="cover"
+                      contentFit="cover"
+                      transition={200}
+                      cachePolicy="memory-disk"
+                      placeholder={{ uri: getPlaceholderImage() }}
                     />
                   ) : (
                     <View style={styles.imagePlaceholder}>

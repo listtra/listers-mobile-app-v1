@@ -70,7 +70,7 @@ export default function ProductChatsScreen() {
         setLoadingText('Loading product details...');
         
         const listingResponse = await axios.get(
-          `https://backend.listtra.com/api/listings/${product_id}/`,
+          `http://127.0.0.1:8000/api/listings/${product_id}/`,
           { headers }
         );
         
@@ -84,7 +84,7 @@ export default function ProductChatsScreen() {
         setLoadingText('Loading conversations...');
         
         const conversationsResponse = await axios.get(
-          'https://backend.listtra.com/api/chat/conversations/',
+          'http://127.0.0.1:8000/api/chat/conversations/',
           { headers }
         );
         

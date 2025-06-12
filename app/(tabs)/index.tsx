@@ -282,7 +282,7 @@ export default function ListingsScreen() {
   if (isInitializing || !isReady) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#6200EA" />
+        <ActivityIndicator size="large" color="#2528be" />
       </View>
     );
   }
@@ -322,6 +322,7 @@ const styles = StyleSheet.create({
   webViewContainer: {
     flex: 1,
     backgroundColor: 'white',
+    marginBottom:60
   },
   loadingContainer: {
     flex: 1,
@@ -338,7 +339,7 @@ const styles = StyleSheet.create({
     borderBottomColor: '#e0e0e0',
     borderBottomWidth: 1,
     zIndex: 10,
-    marginBottom:10
+    marginBottom:10,
   },
   headerButton: {
     padding: 8,

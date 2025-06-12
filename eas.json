@@ -17,6 +17,19 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "ios": {
+        "simulator": false
+      }
+    },
+    "adhoc": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "ios": {
+        "simulator": false,
+        "credentialsSource": "remote"
       }
     },
     "production": {

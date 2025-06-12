@@ -340,7 +340,7 @@ const WebViewScreen = React.forwardRef<{ injectJavaScript: (script: string) => v
                           document.querySelector('.empty-message').style.display = 'block';
                           document.getElementById('listings-container').innerHTML = '';
                           
-                          fetch('https://backend.listtra.com/api/listings/?seller=' + userId, {
+                          fetch('http://127.0.0.1:8000/api/listings/?seller=' + userId, {
                             headers: {
                               'Authorization': 'Bearer ' + token
                             }
@@ -367,7 +367,7 @@ const WebViewScreen = React.forwardRef<{ injectJavaScript: (script: string) => v
                           document.querySelector('.empty-message').style.display = 'block';
                           document.getElementById('listings-container').innerHTML = '';
                           
-                          fetch('https://backend.listtra.com/api/listings/liked/', {
+                          fetch('http://127.0.0.1:8000/api/listings/liked/', {
                             headers: {
                               'Authorization': 'Bearer ' + token
                             }
@@ -393,7 +393,7 @@ const WebViewScreen = React.forwardRef<{ injectJavaScript: (script: string) => v
                           document.querySelector('.empty-message').style.display = 'block';
                           document.getElementById('listings-container').innerHTML = '';
                           
-                          fetch('https://backend.listtra.com/api/reviews/seller/' + userId + '/', {
+                          fetch('http://127.0.0.1:8000/api/reviews/seller/' + userId + '/', {
                             headers: {
                               'Authorization': 'Bearer ' + token
                             }
@@ -673,7 +673,7 @@ const WebViewScreen = React.forwardRef<{ injectJavaScript: (script: string) => v
                     
                     try {
                       // Make API call to create conversation
-                      const API_URL = 'https://backend.listtra.com';
+                      const API_URL = 'http://127.0.0.1:8000';
                       const token = localStorage.getItem('token');
                       
                       if (!token) {
@@ -1263,7 +1263,7 @@ const WebViewScreen = React.forwardRef<{ injectJavaScript: (script: string) => v
                   
                   try {
                     // Make API call to create conversation
-                    const API_URL = 'https://backend.listtra.com';
+                    const API_URL = 'http://127.0.0.1:8000';
                     const token = localStorage.getItem('token');
                     
                     if (!token) {

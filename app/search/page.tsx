@@ -194,7 +194,7 @@ export default function SearchPage() {
       
       // Create API instance with auth token if available
       const api = axios.create({
-        baseURL: 'https://backend.listtra.com',
+        baseURL: 'http://127.0.0.1:8000',
         headers: {
           ...(tokens?.accessToken ? { Authorization: `Bearer ${tokens.accessToken}` } : {}),
           'Content-Type': 'application/json',
@@ -223,7 +223,7 @@ export default function SearchPage() {
     try {
       // Create API instance with auth token if available
       const api = axios.create({
-        baseURL: 'https://backend.listtra.com',
+        baseURL: 'http://127.0.0.1:8000',
         headers: {
           ...(tokens?.accessToken ? { Authorization: `Bearer ${tokens.accessToken}` } : {}),
           'Content-Type': 'application/json',
@@ -368,7 +368,7 @@ export default function SearchPage() {
     try {
       // Create API instance with auth token
       const api = axios.create({
-        baseURL: 'https://backend.listtra.com',
+        baseURL: 'http://127.0.0.1:8000',
         headers: {
           Authorization: `Bearer ${tokens.accessToken}`,
           'Content-Type': 'application/json',

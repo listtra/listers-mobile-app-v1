@@ -4,10 +4,11 @@ import axios from "axios";
 import * as ImagePicker from "expo-image-picker";
 import { useFocusEffect, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
+    Animated,
     Dimensions,
     Image,
     Modal,
@@ -103,6 +104,33 @@ export default function AddItem() {
     slug: string;
     product_id: string;
   } | null>(null);
+
+  // Input animation states
+  const titleFocusAnim = useRef(new Animated.Value(0)).current;
+  const descriptionFocusAnim = useRef(new Animated.Value(0)).current;
+  const priceFocusAnim = useRef(new Animated.Value(0)).current;
+  const locationFocusAnim = useRef(new Animated.Value(0)).current;
+  const [focusedInput, setFocusedInput] = useState<string | null>(null);
+
+  // Animation functions
+  const animateInput = (value: Animated.Value, toValue: number) => {
+    Animated.timing(value, {
+      toValue,
+      duration: 200,
+      useNativeDriver: false,
+    }).start();
+  };
+
+  // Handle input focus and blur
+  const handleInputFocus = (inputName: string, animValue: Animated.Value) => {
+    setFocusedInput(inputName);
+    animateInput(animValue, 1);
+  };
+
+  const handleInputBlur = (animValue: Animated.Value) => {
+    setFocusedInput(null);
+    animateInput(animValue, 0);
+  };
 
   // Reset form when the component is focused again
   useFocusEffect(
@@ -439,7 +467,7 @@ export default function AddItem() {
 
       // Make the API request
       const response = await axios.post(
-        "https://backend.listtra.com/api/listings/create/",
+        "http://127.0.0.1:8000/api/listings/create/",
         formDataToSend,
         {
           headers: {
@@ -472,7 +500,14 @@ export default function AddItem() {
   // Add handler for "View Item" button in success screen
   const handleViewItem = () => {
     if (newListing) {
-      router.push({pathname: '/web', params: {uri: `https://listtra.com/listings/${newListing.slug}/${newListing.product_id}`}} as any);
+      // Navigate directly to listing details page
+      router.push({
+        pathname: '/listings/[slug]/[id]',
+        params: { 
+          slug: newListing.slug, 
+          id: newListing.product_id 
+        }
+      } as any);
     } else {
       router.push('/(tabs)/listings' as any);
     }
@@ -556,7 +591,7 @@ export default function AddItem() {
                         : option}
                     </Text>
                     {selectedValue === option && (
-                      <Ionicons name="checkmark" size={20} color="#0066CC" />
+                      <Ionicons name="checkmark" size={20} color="#2528BE" />
                     )}
                   </TouchableOpacity>
                 ))}
@@ -572,7 +607,7 @@ export default function AddItem() {
   if (isLoading) {
     return (
       <SafeAreaViewContext style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#0066CC" />
+        <ActivityIndicator size="large" color="#2528BE" />
         <Text style={styles.loadingText}>Preparing...</Text>
       </SafeAreaViewContext>
     );
@@ -813,16 +848,47 @@ export default function AddItem() {
 
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Title*</Text>
-              <TextInput
-                style={[
-                  styles.input,
-                  formErrors.title ? styles.inputError : null,
-                ]}
-                placeholder="What are you selling?"
-                value={formData.title}
-                onChangeText={(value) => handleInputChange("title", value)}
-                maxLength={100}
-              />
+              <Animated.View style={[
+                styles.animatedInputContainer,
+                {
+                  borderColor: titleFocusAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: ['#DDDDDD', '#2528BE']
+                  }),
+                  transform: [
+                    {
+                      scale: titleFocusAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [1, 1.02]
+                      })
+                    }
+                  ],
+                  shadowOpacity: titleFocusAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0, 0.2]
+                  })
+                }
+              ]}>
+                <Ionicons 
+                  name="pricetag-outline" 
+                  size={20} 
+                  color={focusedInput === 'title' ? '#2528BE' : '#999'} 
+                  style={styles.inputIcon}
+                />
+                <TextInput
+                  style={[
+                    styles.animatedInput,
+                    formErrors.title ? styles.inputError : null,
+                  ]}
+                  placeholder="What are you selling?"
+                  placeholderTextColor="#999"
+                  value={formData.title}
+                  onChangeText={(value) => handleInputChange("title", value)}
+                  maxLength={100}
+                  onFocus={() => handleInputFocus("title", titleFocusAnim)}
+                  onBlur={() => handleInputBlur(titleFocusAnim)}
+                />
+              </Animated.View>
               {formErrors.title && (
                 <Text style={styles.errorText}>{formErrors.title}</Text>
               )}
@@ -859,20 +925,51 @@ export default function AddItem() {
 
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Description*</Text>
-              <TextInput
-                style={[
-                  styles.textArea,
-                  formErrors.description ? styles.inputError : null,
-                ]}
-                placeholder="Describe your item (condition, features, etc.)"
-                value={formData.description}
-                onChangeText={(value) =>
-                  handleInputChange("description", value)
+              <Animated.View style={[
+                styles.animatedTextAreaContainer,
+                {
+                  borderColor: descriptionFocusAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: ['#DDDDDD', '#2528BE']
+                  }),
+                  transform: [
+                    {
+                      scale: descriptionFocusAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [1, 1.02]
+                      })
+                    }
+                  ],
+                  shadowOpacity: descriptionFocusAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0, 0.2]
+                  })
                 }
-                multiline
-                numberOfLines={4}
-                textAlignVertical="top"
-              />
+              ]}>
+                <Ionicons 
+                  name="document-text-outline" 
+                  size={20} 
+                  color={focusedInput === 'description' ? '#2528BE' : '#999'} 
+                  style={styles.textAreaIcon}
+                />
+                <TextInput
+                  style={[
+                    styles.animatedTextArea,
+                    formErrors.description ? styles.inputError : null,
+                  ]}
+                  placeholder="Describe your item (condition, features, etc.)"
+                  placeholderTextColor="#999"
+                  value={formData.description}
+                  onChangeText={(value) =>
+                    handleInputChange("description", value)
+                  }
+                  multiline
+                  numberOfLines={4}
+                  textAlignVertical="top"
+                  onFocus={() => handleInputFocus("description", descriptionFocusAnim)}
+                  onBlur={() => handleInputBlur(descriptionFocusAnim)}
+                />
+              </Animated.View>
               {formErrors.description && (
                 <Text style={styles.errorText}>{formErrors.description}</Text>
               )}
@@ -880,25 +977,50 @@ export default function AddItem() {
 
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Price (₹)*</Text>
-              <View style={styles.priceInputContainer}>
-                <Text style={styles.currencySymbolSmall}>₹</Text>
+              <Animated.View style={[
+                styles.animatedInputContainer,
+                {
+                  borderColor: priceFocusAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: ['#DDDDDD', '#2528BE']
+                  }),
+                  transform: [
+                    {
+                      scale: priceFocusAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [1, 1.02]
+                      })
+                    }
+                  ],
+                  shadowOpacity: priceFocusAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0, 0.2]
+                  })
+                }
+              ]}>
+                <Text style={[
+                  styles.currencySymbol,
+                  focusedInput === 'price' ? styles.currencySymbolFocused : null
+                ]}>$</Text>
                 <TextInput
                   style={[
-                    styles.input,
+                    styles.animatedInput,
+                    styles.priceInput,
                     formErrors.price ? styles.inputError : null,
                   ]}
                   placeholder="0.00"
+                  placeholderTextColor="#999"
                   value={formData.price}
                   onChangeText={(value) => handleInputChange("price", value)}
                   keyboardType="decimal-pad"
+                  onFocus={() => handleInputFocus("price", priceFocusAnim)}
+                  onBlur={() => handleInputBlur(priceFocusAnim)}
                 />
-              </View>
+              </Animated.View>
               {formErrors.price && (
                 <Text style={styles.errorText}>{formErrors.price}</Text>
               )}
-              <Text style={styles.priceSuggestionTextSmall}>
-                Similar items are priced between ₹500 - ₹2,000
-              </Text>
+              
             </View>
 
             <View style={styles.inputGroup}>
@@ -919,15 +1041,46 @@ export default function AddItem() {
 
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Pickup Location*</Text>
-              <TextInput
-                style={[
-                  styles.input,
-                  formErrors.location ? styles.inputError : null,
-                ]}
-                placeholder="Where can buyers pick this up?"
-                value={formData.location}
-                onChangeText={(value) => handleInputChange("location", value)}
-              />
+              <Animated.View style={[
+                styles.animatedInputContainer,
+                {
+                  borderColor: locationFocusAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: ['#DDDDDD', '#2528BE']
+                  }),
+                  transform: [
+                    {
+                      scale: locationFocusAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [1, 1.02]
+                      })
+                    }
+                  ],
+                  shadowOpacity: locationFocusAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0, 0.2]
+                  })
+                }
+              ]}>
+                <Ionicons 
+                  name="location-outline" 
+                  size={20} 
+                  color={focusedInput === 'location' ? '#2528BE' : '#999'} 
+                  style={styles.inputIcon}
+                />
+                <TextInput
+                  style={[
+                    styles.animatedInput,
+                    formErrors.location ? styles.inputError : null,
+                  ]}
+                  placeholder="Where can buyers pick this up?"
+                  placeholderTextColor="#999"
+                  value={formData.location}
+                  onChangeText={(value) => handleInputChange("location", value)}
+                  onFocus={() => handleInputFocus("location", locationFocusAnim)}
+                  onBlur={() => handleInputBlur(locationFocusAnim)}
+                />
+              </Animated.View>
               {formErrors.location && (
                 <Text style={styles.errorText}>{formErrors.location}</Text>
               )}
@@ -937,11 +1090,15 @@ export default function AddItem() {
               style={styles.submitButton}
               onPress={handleSubmit}
               disabled={isSubmitting}
+              activeOpacity={0.8}
             >
               {isSubmitting ? (
                 <ActivityIndicator size="small" color="#FFF" />
               ) : (
-                <Text style={styles.submitButtonText}>List</Text>
+                <>
+                  <Text style={styles.submitButtonText}>List Item</Text>
+                  <Ionicons name="arrow-forward-circle" size={20} color="#FFF" style={styles.submitButtonIcon} />
+                </>
               )}
             </TouchableOpacity>
           </ScrollView>
@@ -968,10 +1125,10 @@ export default function AddItem() {
             </TouchableOpacity>
             
             <TouchableOpacity
-              style={[styles.exploreButton, { backgroundColor: '#fff', borderWidth: 1, borderColor: '#0066CC', marginTop: 12 }]}
+              style={[styles.exploreButton, { backgroundColor: '#fff', borderWidth: 1, borderColor: '#2528BE', marginTop: 12 }]}
               onPress={() => router.push('/(tabs)/listings' as any)}
             >
-              <Text style={[styles.exploreButtonText, { color: '#0066CC' }]}>Go to Listings</Text>
+              <Text style={[styles.exploreButtonText, { color: '#2528BE' }]}>Go to Listings</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1029,12 +1186,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   nextButtonText: {
-    color: "#0066CC",
+    color: "#2528BE",
     fontSize: 16,
     fontWeight: "bold",
   },
   scrollView: {
     flex: 1,
+    marginBottom: 40,
   },
   scrollViewContent: {
     padding: 16,
@@ -1125,19 +1283,27 @@ const styles = StyleSheet.create({
     color: "#333",
   },
   selectedDropdownItemText: {
-    color: "#0066CC",
+    color: "#2528BE",
     fontWeight: "500",
   },
   submitButton: {
-    backgroundColor: "#0066CC",
-    borderRadius: 8,
-    paddingVertical: 14,
+    backgroundColor: "#2528BE",
+    borderRadius: 12,
+    paddingVertical: 16,
     alignItems: "center",
-    marginTop: 20,
+    marginTop: 30,
+    marginBottom: 20,
+    shadowColor: "#2528BE",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+    elevation: 4,
+    flexDirection: "row",
+    justifyContent: "center",
   },
   submitButtonText: {
     color: "#FFFFFF",
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: "bold",
   },
   loadingContainer: {
@@ -1146,7 +1312,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   loadingText: {
-    color: "#0066CC",
+    color: "#2528BE",
     fontSize: 16,
     fontWeight: "bold",
     marginTop: 16,
@@ -1259,7 +1425,7 @@ const styles = StyleSheet.create({
     borderTopColor: "#EEEEEE",
   },
   nextPageButton: {
-    backgroundColor: "#0066CC",
+    backgroundColor: "#2528BE",
     borderRadius: 8,
     paddingVertical: 16,
     alignItems: "center",
@@ -1277,6 +1443,7 @@ const styles = StyleSheet.create({
   secondPageContainer: {
     flex: 1,
     backgroundColor: "#FFFFFF",
+    paddingBottom: 30,
   },
   mainImageContainer: {
     flex: 1,
@@ -1340,7 +1507,7 @@ const styles = StyleSheet.create({
     position: "relative",
   },
   selectedPreviewThumbnail: {
-    borderColor: "#0066CC",
+    borderColor: "#2528BE",
   },
   thumbnailImage: {
     width: "100%",
@@ -1361,7 +1528,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   nextStepButton: {
-    backgroundColor: "#0066CC",
+    backgroundColor: "#2528BE",
     paddingVertical: 12,
     paddingHorizontal: 20,
     borderRadius: 8,
@@ -1432,7 +1599,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   thirdPageMainImageWrapper: {
-    borderColor: "#0066CC",
+    borderColor: "#2528BE",
     borderWidth: 2,
   },
   thirdPageImage: {
@@ -1484,7 +1651,7 @@ const styles = StyleSheet.create({
     lineHeight: 24,
   },
   exploreButton: {
-    backgroundColor: "#0066CC",
+    backgroundColor: "#2528BE",
     borderRadius: 8,
     paddingVertical: 14,
     paddingHorizontal: 24,
@@ -1514,14 +1681,81 @@ const styles = StyleSheet.create({
   },
   selectedCategoryItem: {
     backgroundColor: '#E1F5FE',
-    borderColor: '#0066CC',
+    borderColor: '#2528BE',
   },
   categoryText: {
     fontSize: 14,
     color: '#333333',
   },
   selectedCategoryText: {
-    color: '#0066CC',
+    color: '#2528BE',
     fontWeight: '500',
+  },
+  animatedInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: "#DDDDDD",
+    borderRadius: 12,
+    backgroundColor: "#FAFAFA",
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    shadowColor: "#2528BE",
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  animatedInput: {
+    flex: 1,
+    fontSize: 16,
+    color: "#333",
+    paddingLeft: 30,
+  },
+  inputIcon: {
+    position: "absolute",
+    left: 12,
+    zIndex: 1,
+  },
+  animatedTextAreaContainer: {
+    position: 'relative',
+    borderWidth: 1,
+    borderColor: "#DDDDDD",
+    borderRadius: 12,
+    backgroundColor: "#FAFAFA",
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    shadowColor: "#2528BE",
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  animatedTextArea: {
+    fontSize: 16,
+    color: "#333",
+    minHeight: 100,
+    textAlignVertical: "top",
+    paddingLeft: 30,
+  },
+  textAreaIcon: {
+    position: "absolute",
+    left: 12,
+    top: 12,
+    zIndex: 1,
+  },
+  currencySymbol: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#666",
+    marginRight: 8,
+    zIndex: 1,
+  },
+  currencySymbolFocused: {
+    color: "#2528BE",
+  },
+  priceInput: {
+    paddingLeft: 10,
+  },
+  submitButtonIcon: {
+    marginLeft: 8,
   },
 });

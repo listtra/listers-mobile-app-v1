@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_URL = 'https://backend.listtra.com';
+const API_URL = 'http://127.0.0.1:8000';
 
 // Function to get API instance with auth token
 const getApiInstance = async (token: string) => {

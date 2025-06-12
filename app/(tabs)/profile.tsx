@@ -1,12 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
 import axios from 'axios';
+import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
   FlatList,
-  Image,
   RefreshControl,
   ScrollView,
   StatusBar,
@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
+import { getPlaceholderImage, optimizeCloudinaryUrl } from '../../utils/imageUtils';
 
 // Define the types for our data
 type Listing = {
@@ -134,7 +135,7 @@ export default function ProfileScreen() {
       
       // Create API instance with auth token
       const api = axios.create({
-        baseURL: 'https://backend.listtra.com',
+        baseURL: 'http://127.0.0.1:8000',
         headers: {
           Authorization: `Bearer ${tokens.accessToken}`,
           'Content-Type': 'application/json',
@@ -200,21 +201,21 @@ export default function ProfileScreen() {
   const getImageUrl = (item: Listing) => {
     // First try to use main_image if available
     if (item.main_image) {
-      return item.main_image;
+      return optimizeCloudinaryUrl(item.main_image);
     }
     
     // Then try to find primary image
     if (item.images && item.images.length > 0) {
       const primaryImage = item.images.find(img => img.is_primary === true);
       if (primaryImage?.image_url) {
-        return primaryImage.image_url;
+        return optimizeCloudinaryUrl(primaryImage.image_url);
       }
       
       // Fallback to first image
-      return item.images[0]?.image_url || '';
+      return optimizeCloudinaryUrl(item.images[0]?.image_url || '');
     }
     
-    return '';
+    return getPlaceholderImage();
   };
   
   // Get initial of name for avatar placeholder
@@ -229,7 +230,7 @@ export default function ProfileScreen() {
     isCurrentlyLiked: boolean,
     accessToken: string
   ) => {
-    const baseURL = 'https://backend.listtra.com';
+    const baseURL = 'http://127.0.0.1:8000';
     const endpoint = `/api/listings/${slug}/${listingId}/like/`;
     const url = `${baseURL}${endpoint}`;
     
@@ -439,7 +440,10 @@ export default function ProfileScreen() {
             <Image 
               source={{ uri: imageUrl }} 
               style={styles.listingImage} 
-              resizeMode="contain"
+              contentFit="contain"
+              transition={200}
+              cachePolicy="memory-disk"
+              placeholder={{ uri: getPlaceholderImage() }}
             />
           ) : (
             <View style={styles.noImageContainer}>
@@ -577,8 +581,11 @@ export default function ProfileScreen() {
             {/* Avatar */}
             {profile.avatar ? (
               <Image
-                source={{ uri: profile.avatar }}
+                source={{ uri: optimizeCloudinaryUrl(profile.avatar, 200, 90) }}
                 style={styles.avatar}
+                contentFit="cover"
+                transition={300}
+                cachePolicy="memory-disk"
               />
             ) : (
               <View style={styles.avatarPlaceholder}>
@@ -794,6 +801,7 @@ const styles = StyleSheet.create({
   },
   tabContent: {
     padding: 10,
+    paddingBottom: 60,
   },
   emptyContainer: {
     alignItems: 'center',

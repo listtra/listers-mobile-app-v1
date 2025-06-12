@@ -20,7 +20,7 @@ export default function ListingDetailScreen() {
       
       try {
         setIsLoading(true);
-        const url = `https://backend.listtra.com/api/listings/${id}/`;
+        const url = `http://127.0.0.1:8000/api/listings/${id}/`;
         
         // Add auth header if user is logged in
         const headers = tokens.accessToken 
@@ -109,7 +109,7 @@ export default function ListingDetailScreen() {
                   
                   try {
                     // Make API call to create conversation
-                    const API_URL = 'https://backend.listtra.com';
+                    const API_URL = 'http://127.0.0.1:8000';
                     const token = localStorage.getItem('token');
                     
                     if (!token) {

@@ -296,7 +296,7 @@ const styles = StyleSheet.create({
     marginTop: -25,
   },
   formCard: {
-    marginTop: 30,
+    marginTop: Platform.OS === 'ios' ? 60 : 30,
     backgroundColor: 'white',
     borderRadius: 24,
     marginHorizontal: 20,

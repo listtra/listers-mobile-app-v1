@@ -4,17 +4,17 @@ import * as ImagePicker from 'expo-image-picker';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  Image,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
+    ActivityIndicator,
+    Alert,
+    Image,
+    KeyboardAvoidingView,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { useAuth } from '../../../../context/AuthContext';
 
@@ -78,7 +78,7 @@ export default function ListingEditScreen() {
       setLoading(true);
       
       const response = await axios.get(
-        `https://backend.listtra.com/api/listings/${slug}/${product_id}/`,
+        `http://127.0.0.1:8000/api/listings/${slug}/${product_id}/`,
         {
           headers: {
             Authorization: `Bearer ${tokens?.accessToken}`
@@ -291,7 +291,7 @@ export default function ListingEditScreen() {
       
       // Submit update
       const response = await axios.put(
-        `https://backend.listtra.com/api/listings/${slug}/${product_id}/`,
+        `http://127.0.0.1:8000/api/listings/${slug}/${product_id}/`,
         formDataToSubmit,
         {
           headers: {

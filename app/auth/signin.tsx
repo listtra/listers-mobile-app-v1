@@ -57,7 +57,12 @@ export default function SignInScreen() {
   const handleGoogleSignIn = async () => {
     clearError();
     setShowSignupPrompt(false);
-    await loginWithGoogle();
+    console.log('Starting Google sign-in...');
+    try {
+      await loginWithGoogle();
+    } catch (err) {
+      console.error('Google sign-in error:', err);
+    }
   };
 
   // Handle navigation to sign-up
@@ -72,7 +77,7 @@ export default function SignInScreen() {
 
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      behavior={Platform.OS === 'ios' ? 'height' : 'height'}
       style={styles.container}
     >
       <StatusBar style="light" />
@@ -201,7 +206,7 @@ const styles = StyleSheet.create({
   },
   header: {
     backgroundColor: '#2528be',
-    paddingTop: Platform.OS === 'ios' ? 100 : 90,
+    paddingTop: Platform.OS === 'ios' ? 90 : 90,
     paddingBottom: 40,
     position: 'relative',
     zIndex: 1,
@@ -209,7 +214,7 @@ const styles = StyleSheet.create({
   backButton: {
     position: 'absolute',
     left: 16,
-    top: Platform.OS === 'ios' ? 50 : 40,
+    top: Platform.OS === 'ios' ? 40 : 40,
     width: 36,
     height: 36,
     borderRadius: 18,
@@ -222,6 +227,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingTop: 20,
+    zIndex: 1,
   },
   headerTitle: {
     fontSize: 32,
@@ -240,7 +246,7 @@ const styles = StyleSheet.create({
     marginTop: -25, // Helps create the overlap effect
   },
   formCard: {
-    marginTop: 30,
+    marginTop: Platform.OS === 'ios' ? 60 : 40,
     backgroundColor: 'white',
     borderRadius: 24,
     marginHorizontal: 20,
@@ -251,6 +257,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.15,
     shadowRadius: 8,
     elevation: 5,
+    zIndex: 10,
   },
   errorContainer: {
     backgroundColor: '#FFEBEE',
