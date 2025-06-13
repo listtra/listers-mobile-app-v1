@@ -26,7 +26,41 @@ export default function SignUpScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [validationError, setValidationError] = useState('');
   const [termsAccepted, setTermsAccepted] = useState(false);
+  const [userFriendlyError, setUserFriendlyError] = useState('');
   const router = useRouter();
+
+  // Process errors to show user-friendly messages
+  useEffect(() => {
+    if (error) {
+      // Check for server errors (HTML or 500)
+      if (
+        typeof error === 'string' && 
+        (error.trim().startsWith('<!DOCTYPE html') || 
+         error.trim().startsWith('<html') || 
+         error.trim().includes('Server Error (500)') ||
+         error.includes('status code 500'))
+      ) {
+        setUserFriendlyError('Sorry, something went wrong. Please try again later.');
+      } 
+      // Email already exists
+      else if (
+        typeof error === 'string' && 
+        (error.includes('email') && error.includes('already exists'))
+      ) {
+        setUserFriendlyError('This email is already registered. Please use another email or sign in.');
+      }
+      // Other validation errors
+      else if (error && typeof error === 'object') {
+        setUserFriendlyError('Please check your information and try again.');
+      } 
+      // Default error
+      else {
+        setUserFriendlyError('Registration failed. Please try again.');
+      }
+    } else {
+      setUserFriendlyError('');
+    }
+  }, [error]);
 
   // Check for pending email from failed Google sign-in
   useEffect(() => {
@@ -115,11 +149,19 @@ export default function SignUpScreen() {
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={styles.container}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
     >
-      <StatusBar style="light" />
+      <StatusBar style="dark" translucent={true} />
       
       {/* Blue Header */}
       <View style={styles.header}>
+        <TouchableOpacity 
+          style={styles.backButton}
+          onPress={() => router.push('/auth/signin')}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="arrow-back" size={24} color="white" />
+        </TouchableOpacity>
         <View style={styles.headerContent}>
           <Text style={styles.headerTitle}>Create Account</Text>
           <Text style={styles.headerSubtitle}>Sign up to get started!</Text>
@@ -129,13 +171,17 @@ export default function SignUpScreen() {
       <ScrollView 
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        bounces={false}
       >
         {/* Form Card */}
         <View style={styles.formCard}>
           {/* Error Message */}
-          {(error || validationError) && (
+          {(userFriendlyError || validationError) && (
             <View style={styles.errorContainer}>
-              <Text style={styles.errorText}>{validationError || error}</Text>
+              <Text style={styles.errorText}>
+                {validationError || userFriendlyError}
+              </Text>
             </View>
           )}
 
@@ -269,7 +315,7 @@ const styles = StyleSheet.create({
   },
   header: {
     backgroundColor: '#2528be',
-    paddingTop: Platform.OS === 'ios' ? 100 : 90,
+    paddingTop: Platform.OS === 'ios' ? 60 : 50,
     paddingBottom: 40,
     position: 'relative',
     zIndex: 1,
@@ -309,14 +355,19 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
   errorContainer: {
-    backgroundColor: '#FFEBEE',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 16,
+    backgroundColor: '#ffeaea',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#ffb3b3',
+    padding: 14,
+    marginBottom: 18,
+    alignItems: 'center',
   },
   errorText: {
-    color: '#D32F2F',
-    fontSize: 14,
+    color: '#d32f2f',
+    fontWeight: 'bold',
+    fontSize: 15,
+    textAlign: 'center',
   },
   inputContainer: {
     marginBottom: 20,
@@ -388,5 +439,12 @@ const styles = StyleSheet.create({
     color: '#2528be',
     fontSize: 14,
     fontWeight: '700',
+  },
+  backButton: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 60 : 50,
+    left: 20,
+    zIndex: 2,
+    padding: 8,
   },
 }); 

@@ -78,7 +78,7 @@ export default function ListingEditScreen() {
       setLoading(true);
       
       const response = await axios.get(
-        `http://127.0.0.1:8000/api/listings/${slug}/${product_id}/`,
+        `https://backend.listtra.com/api/listings/${slug}/${product_id}/`,
         {
           headers: {
             Authorization: `Bearer ${tokens?.accessToken}`
@@ -291,7 +291,7 @@ export default function ListingEditScreen() {
       
       // Submit update
       const response = await axios.put(
-        `http://127.0.0.1:8000/api/listings/${slug}/${product_id}/`,
+        `https://backend.listtra.com/api/listings/${slug}/${product_id}/`,
         formDataToSubmit,
         {
           headers: {

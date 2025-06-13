@@ -4,20 +4,20 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    KeyboardAvoidingView,
+    Platform,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from 'react-native';
 import { useAuth } from '../../context/AuthContext';
 
 // API endpoint configuration 
-const API_URL = 'http://127.0.0.1:8000'; // Local development server
+const API_URL = 'https://backend.listtra.com'; // Local development server
 
 export default function VerifyEmailScreen() {
   const { error, clearError, isLoading, setTokensDirectly } = useAuth();

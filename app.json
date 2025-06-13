@@ -10,7 +10,35 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.listtra.app"
+      "bundleIdentifier": "com.listtra.app",
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": false,
+          "NSExceptionDomains": {
+            "res.cloudinary.com": {
+              "NSExceptionAllowsInsecureHTTPLoads": false,
+              "NSIncludesSubdomains": true,
+              "NSExceptionMinimumTLSVersion": "TLSv1.2",
+              "NSExceptionRequiresForwardSecrecy": true
+            },
+            "cloudinary.com": {
+              "NSIncludesSubdomains": true,
+              "NSExceptionMinimumTLSVersion": "TLSv1.2",
+              "NSExceptionRequiresForwardSecrecy": true
+            },
+            "listtra.com": {
+              "NSIncludesSubdomains": true,
+              "NSExceptionMinimumTLSVersion": "TLSv1.2",
+              "NSExceptionRequiresForwardSecrecy": true
+            },
+            "backend.listtra.com": {
+              "NSIncludesSubdomains": true,
+              "NSExceptionMinimumTLSVersion": "TLSv1.2",
+              "NSExceptionRequiresForwardSecrecy": true
+            }
+          }
+        }
+      }
     },
     "android": {
       "adaptiveIcon": {

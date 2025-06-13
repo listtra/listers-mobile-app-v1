@@ -1,29 +1,29 @@
 import {
-  Manrope_400Regular,
-  Manrope_500Medium,
-  Manrope_600SemiBold,
-  Manrope_700Bold,
-  useFonts,
+    Manrope_400Regular,
+    Manrope_500Medium,
+    Manrope_600SemiBold,
+    Manrope_700Bold,
+    useFonts,
 } from '@expo-google-fonts/manrope';
 import { AntDesign, Ionicons, MaterialIcons } from '@expo/vector-icons';
 import axios from 'axios';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  Dimensions,
-  Image,
-  Modal,
-  Platform,
-  SafeAreaView,
-  ScrollView,
-  Share,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View
+    ActivityIndicator,
+    Alert,
+    Dimensions,
+    Image,
+    Modal,
+    Platform,
+    SafeAreaView,
+    ScrollView,
+    Share,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import Carousel from 'react-native-snap-carousel';
 import { useAuth } from '../../../../context/AuthContext';
@@ -79,7 +79,7 @@ const toggleLikeAPI = async (
   isCurrentlyLiked: boolean,
   accessToken: string
 ) => {
-  const baseURL = 'http://127.0.0.1:8000';
+  const baseURL = 'https://backend.listtra.com';
   const endpoint = `/api/listings/${slug}/${productId}/like/`;
   const url = `${baseURL}${endpoint}`;
   
@@ -213,7 +213,7 @@ export default function ListingDetailScreen() {
       
       try {
         setIsLoading(true);
-        const url = `http://127.0.0.1:8000/api/listings/${product_id}/`;
+        const url = `https://backend.listtra.com/api/listings/${product_id}/`;
         
         const headers = tokens?.accessToken 
           ? { Authorization: `Bearer ${tokens.accessToken}` } 
@@ -258,7 +258,7 @@ export default function ListingDetailScreen() {
     
     try {
       setUpdateStatusLoading(true);
-      const url = `http://127.0.0.1:8000/api/listings/${slug}/${product_id}/status/`;
+      const url = `https://backend.listtra.com/api/listings/${slug}/${product_id}/status/`;
       
       const response = await axios.patch(
         url, 
@@ -371,7 +371,7 @@ export default function ListingDetailScreen() {
     }
     
     try {
-      const url = 'http://127.0.0.1:8000/api/chat/conversations/';
+      const url = 'https://backend.listtra.com/api/chat/conversations/';
       const response = await axios.post(
         url,
         { listing: product_id },

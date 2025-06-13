@@ -6,19 +6,19 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    Animated,
-    Dimensions,
-    Image,
-    Modal,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  Animated,
+  Dimensions,
+  Image,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from "react-native";
 import { SafeAreaView as SafeAreaViewContext } from "react-native-safe-area-context";
 
@@ -467,7 +467,7 @@ export default function AddItem() {
 
       // Make the API request
       const response = await axios.post(
-        "http://127.0.0.1:8000/api/listings/create/",
+        "https://backend.listtra.com/api/listings/create/",
         formDataToSend,
         {
           headers: {
@@ -703,7 +703,7 @@ export default function AddItem() {
 
       {currentStep === 2 && (
         // Step 2: Image Preview and Navigation
-        <View style={styles.secondPageContainer} className="mb-16">
+        <View style={[styles.secondPageContainer, { marginBottom: 16 }]}>
           <View style={styles.header}>
             <TouchableOpacity
               onPress={() => setCurrentStep(1)}
@@ -809,10 +809,9 @@ export default function AddItem() {
             <View style={{ width: 40 }} />
           </View>
           <ScrollView
-            style={styles.scrollView}
+            style={[styles.scrollView, { marginBottom: 12 }]}
             contentContainerStyle={styles.scrollViewContent}
             showsVerticalScrollIndicator={false}
-            className="mb-12"
           >
             {/* Images preview row (view only) */}
             {images.length > 0 && (

@@ -4,13 +4,13 @@ import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
-  FlatList,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View
+    ActivityIndicator,
+    FlatList,
+    RefreshControl,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
@@ -67,7 +67,7 @@ export default function ChatsScreen() {
       };
       
       const response = await axios.get(
-        'http://127.0.0.1:8000/api/chat/conversations/recent/',
+        'https://backend.listtra.com/api/chat/conversations/recent/',
         { headers }
       );
       

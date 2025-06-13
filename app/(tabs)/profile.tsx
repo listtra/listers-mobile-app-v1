@@ -135,7 +135,7 @@ export default function ProfileScreen() {
       
       // Create API instance with auth token
       const api = axios.create({
-        baseURL: 'http://127.0.0.1:8000',
+        baseURL: 'https://backend.listtra.com',
         headers: {
           Authorization: `Bearer ${tokens.accessToken}`,
           'Content-Type': 'application/json',
@@ -230,7 +230,7 @@ export default function ProfileScreen() {
     isCurrentlyLiked: boolean,
     accessToken: string
   ) => {
-    const baseURL = 'http://127.0.0.1:8000';
+    const baseURL = 'https://backend.listtra.com';
     const endpoint = `/api/listings/${slug}/${listingId}/like/`;
     const url = `${baseURL}${endpoint}`;
     
@@ -443,7 +443,10 @@ export default function ProfileScreen() {
               contentFit="contain"
               transition={200}
               cachePolicy="memory-disk"
+              recyclingKey={imageUrl}
+              placeholderContentFit="contain"
               placeholder={{ uri: getPlaceholderImage() }}
+              onError={() => console.log('Failed to load image:', imageUrl)}
             />
           ) : (
             <View style={styles.noImageContainer}>
@@ -586,6 +589,12 @@ export default function ProfileScreen() {
                 contentFit="cover"
                 transition={300}
                 cachePolicy="memory-disk"
+                placeholderContentFit="cover"
+                placeholder={{ uri: getPlaceholderImage() }}
+                recyclingKey={profile.avatar}
+                onError={(error) => {
+                  console.log('Image loading error:', error);
+                }}
               />
             ) : (
               <View style={styles.avatarPlaceholder}>

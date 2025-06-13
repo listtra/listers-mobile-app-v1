@@ -61,7 +61,7 @@ export default function ChatListScreen() {
   // Test the API connection (simplified)
   const testApiConnection = async () => {
     try {
-      const response = await axios.get('http://127.0.0.1:8000/api/health-check');
+      const response = await axios.get('https://backend.listtra.com/api/health-check');
       Alert.alert('API Connection Test', `Status: ${response.status}\nData: ${JSON.stringify(response.data)}`);
     } catch (error: any) {
       Alert.alert('API Connection Failed', `Error: ${error.message}`);
@@ -76,7 +76,7 @@ export default function ChatListScreen() {
     }
     
     try {
-      const response = await axios.get('http://127.0.0.1:8000/api/users/me/', {
+      const response = await axios.get('https://backend.listtra.com/api/users/me/', {
         headers: { Authorization: `Bearer ${tokens.accessToken}` }
       });
       
@@ -123,7 +123,7 @@ export default function ChatListScreen() {
       console.log('Verifying user auth...');
       
       try {
-        const userCheck = await axios.get('http://127.0.0.1:8000/api/users/me/', { 
+        const userCheck = await axios.get('https://backend.listtra.com/api/users/me/', { 
           headers,
           timeout: 5000 // 5 second timeout
         });
@@ -139,7 +139,7 @@ export default function ChatListScreen() {
         console.log('Fetching listing:', listingId);
         
         const listingResponse = await axios.get(
-          `http://127.0.0.1:8000/api/listings/${listingId}/`, 
+          `https://backend.listtra.com/api/listings/${listingId}/`, 
           {
             headers,
             timeout: 5000
@@ -155,7 +155,7 @@ export default function ChatListScreen() {
       console.log('Fetching conversations...');
       
       const conversationsResponse = await axios.get(
-        'http://127.0.0.1:8000/api/chat/conversations/', 
+        'https://backend.listtra.com/api/chat/conversations/', 
         {
           headers,
           timeout: 8000

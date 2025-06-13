@@ -4,7 +4,7 @@ export default {
   icon: "./assets/images/icon.png",
   version: "1.0.0",
   extra: {
-    apiUrl: "http://127.0.0.1:8000",
+    apiUrl: "https://backend.listtra.com",
     eas: {
       projectId: "820e18da-a912-4bce-b322-c20119032f5b"
     }

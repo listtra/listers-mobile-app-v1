@@ -10,7 +10,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 WebBrowser.maybeCompleteAuthSession();
 
 // API endpoint configuration
-const API_URL = 'http://127.0.0.1:8000'; // Local development server
+const API_URL = 'https://backend.listtra.com'; // Local development server
 
 // Define app scheme for deep linking
 const APP_SCHEME = 'listtra';
@@ -389,7 +389,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
       } else {
         // If no verification required, log the user in
-        await login(userData.email, userData.password);
+      await login(userData.email, userData.password);
       }
     } catch (error: any) {
       console.error('Registration error:', error);

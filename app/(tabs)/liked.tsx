@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
-import { getPlaceholderImage, optimizeCloudinaryUrl } from '../../utils/imageUtils';
+import { extractImageUrlsFromListings, getPlaceholderImage, optimizeCloudinaryUrl, preloadImages } from '../../utils/imageUtils';
 
 // Define the types for our data
 type Listing = {
@@ -40,7 +40,7 @@ const toggleLikeAPI = async (
   isCurrentlyLiked: boolean,
   accessToken: string
 ) => {
-  const baseURL = 'http://127.0.0.1:8000';
+  const baseURL = 'https://backend.listtra.com';
   const endpoint = `/api/listings/${slug}/${listingId}/like/`;
   const url = `${baseURL}${endpoint}`;
   
@@ -209,7 +209,7 @@ export default function LikedScreen() {
       
       // Create API instance with auth token
       const api = axios.create({
-        baseURL: 'http://127.0.0.1:8000',
+        baseURL: 'https://backend.listtra.com',
         headers: {
           Authorization: `Bearer ${tokens.accessToken}`,
           'Content-Type': 'application/json',
@@ -233,6 +233,12 @@ export default function LikedScreen() {
         initialLikedItems[item.product_id] = true;
       });
       setLikedItems(initialLikedItems);
+      
+      // Preload images for better performance on iOS
+      if (transformedListings.length > 0) {
+        const imageUrls = extractImageUrlsFromListings(transformedListings);
+        preloadImages(imageUrls);
+      }
       
     } catch (error) {
       console.error('Error fetching liked listings:', error);
@@ -411,7 +417,9 @@ export default function LikedScreen() {
               contentFit="contain"
               transition={200}
               cachePolicy="memory-disk"
+              recyclingKey={imageUrl}
               placeholder={{ uri: getPlaceholderImage() }}
+              onError={() => console.log('Failed to load image:', imageUrl)}
             />
           ) : (
             <View style={styles.noImageContainer}>

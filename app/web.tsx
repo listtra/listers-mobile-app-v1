@@ -3,19 +3,19 @@ import axios from 'axios';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  Dimensions,
-  Image,
-  Modal,
-  Platform,
-  ScrollView,
-  Share,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View
+    ActivityIndicator,
+    Alert,
+    Dimensions,
+    Image,
+    Modal,
+    Platform,
+    ScrollView,
+    Share,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Carousel from 'react-native-snap-carousel';
@@ -70,7 +70,7 @@ const toggleLikeAPI = async (
   isCurrentlyLiked: boolean,
   accessToken: string
 ) => {
-  const baseURL = 'http://127.0.0.1:8000';
+  const baseURL = 'https://backend.listtra.com';
   const endpoint = `/api/listings/${slug}/${productId}/like/`;
   const url = `${baseURL}${endpoint}`;
   
@@ -215,7 +215,7 @@ export default function WebScreen() {
       
       try {
         setIsLoading(true);
-        const url = `http://127.0.0.1:8000/api/listings/${product_id}/`;
+        const url = `https://backend.listtra.com/api/listings/${product_id}/`;
         
         const headers = tokens?.accessToken 
           ? { Authorization: `Bearer ${tokens.accessToken}` } 
@@ -324,7 +324,7 @@ export default function WebScreen() {
     }
     
     try {
-      const url = 'http://127.0.0.1:8000/api/chat/conversations/';
+      const url = 'https://backend.listtra.com/api/chat/conversations/';
       const response = await axios.post(
         url,
         { listing: product_id },
@@ -386,7 +386,7 @@ export default function WebScreen() {
     
     try {
       setUpdateStatusLoading(true);
-      const url = `http://127.0.0.1:8000/api/listings/${slug}/${product_id}/status/`;
+      const url = `https://backend.listtra.com/api/listings/${slug}/${product_id}/status/`;
       
       const response = await axios.patch(
         url, 

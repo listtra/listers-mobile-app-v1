@@ -94,10 +94,10 @@ export default function ChatDetailScreen() {
         
         // Fetch conversation and messages in parallel
         const [conversationRes, messagesRes] = await Promise.all([
-          axios.get(`http://127.0.0.1:8000/api/chat/conversations/${id}/`, {
+          axios.get(`https://backend.listtra.com/api/chat/conversations/${id}/`, {
             headers
           }),
-          axios.get(`http://127.0.0.1:8000/api/chat/conversations/${id}/messages/`, {
+          axios.get(`https://backend.listtra.com/api/chat/conversations/${id}/messages/`, {
             headers
           })
         ]);
@@ -124,7 +124,7 @@ export default function ChatDetailScreen() {
         if (conversationRes.data?.listing?.product_id) {
           try {
             const reviewsRes = await axios.get(
-              `http://127.0.0.1:8000/api/reviews/listing/${conversationRes.data.listing.product_id}/`,
+              `https://backend.listtra.com/api/reviews/listing/${conversationRes.data.listing.product_id}/`,
               { headers }
             );
             
@@ -242,7 +242,7 @@ export default function ChatDetailScreen() {
       };
       
       const response = await axios.get(
-        `http://127.0.0.1:8000/api/chat/conversations/${id}/messages/`,
+        `https://backend.listtra.com/api/chat/conversations/${id}/messages/`,
         { headers }
       );
       
@@ -327,7 +327,7 @@ export default function ChatDetailScreen() {
         
         // Create offer via API
         const response = await axios.post(
-          "http://127.0.0.1:8000/api/chat/messages/",
+          "https://backend.listtra.com/api/chat/messages/",
           {
             conversation: parseInt(id),
             content: `Made offer: A$${amount}`,
@@ -380,7 +380,7 @@ export default function ChatDetailScreen() {
         
         // Send message via API
         const response = await axios.post(
-          "http://127.0.0.1:8000/api/chat/messages/",
+          "https://backend.listtra.com/api/chat/messages/",
           {
             conversation: parseInt(id),
             content: trimmedInput,
@@ -437,7 +437,7 @@ export default function ChatDetailScreen() {
       
       // First cancel the existing offer
       await axios.post(
-        `http://127.0.0.1:8000/api/offers/${pendingOffer.id}/cancel/`,
+        `https://backend.listtra.com/api/offers/${pendingOffer.id}/cancel/`,
         {},
         {
           headers: {
@@ -448,7 +448,7 @@ export default function ChatDetailScreen() {
       
       // Then create a new offer
       const response = await axios.post(
-        "http://127.0.0.1:8000/api/chat/messages/",
+        "https://backend.listtra.com/api/chat/messages/",
         {
           conversation: parseInt(id),
           content: `Updated offer: A$${amount}`,
@@ -484,7 +484,7 @@ export default function ChatDetailScreen() {
       
       // Cancel the offer via API
       await axios.post(
-        `http://127.0.0.1:8000/api/offers/${offerId}/cancel/`,
+        `https://backend.listtra.com/api/offers/${offerId}/cancel/`,
         {},
         {
           headers: {
@@ -495,7 +495,7 @@ export default function ChatDetailScreen() {
       
       // Refresh messages to get updated status
       const response = await axios.get(
-        `http://127.0.0.1:8000/api/chat/conversations/${id}/messages/`,
+        `https://backend.listtra.com/api/chat/conversations/${id}/messages/`,
         {
           headers: {
             Authorization: `Bearer ${tokens.accessToken}`
@@ -544,7 +544,7 @@ export default function ChatDetailScreen() {
       
       // Make API request
       await axios.post(
-        `http://127.0.0.1:8000/api/offers/${offerId}/${action.toLowerCase()}/`,
+        `https://backend.listtra.com/api/offers/${offerId}/${action.toLowerCase()}/`,
         {},
         {
           headers: {
@@ -555,7 +555,7 @@ export default function ChatDetailScreen() {
       
       // Refresh messages to ensure consistency
       const response = await axios.get(
-        `http://127.0.0.1:8000/api/chat/conversations/${id}/messages/`,
+        `https://backend.listtra.com/api/chat/conversations/${id}/messages/`,
         {
                       headers: {
             Authorization: `Bearer ${tokens.accessToken}`
@@ -587,7 +587,7 @@ export default function ChatDetailScreen() {
       
       // Submit the review via API
       const reviewResponse = await axios.post(
-        "http://127.0.0.1:8000/api/reviews/",
+        "https://backend.listtra.com/api/reviews/",
         {
           reviewed_user: conversation.listing.seller_id,
           reviewed_product: conversation.listing.product_id,
@@ -603,7 +603,7 @@ export default function ChatDetailScreen() {
       
       // Refresh messages to get the new review
       const messagesResponse = await axios.get(
-        `http://127.0.0.1:8000/api/chat/conversations/${id}/messages/`,
+        `https://backend.listtra.com/api/chat/conversations/${id}/messages/`,
         {
           headers: {
             Authorization: `Bearer ${tokens.accessToken}`
